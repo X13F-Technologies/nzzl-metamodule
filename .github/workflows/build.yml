@@ -1,0 +1,48 @@
+name: Build NZZL plugin
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build on Linux
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Git safe directory
+        run: git config --global --add safe.directory '*'
+
+      - name: Install ARM GNU Toolchain 12.3
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '12.3.Rel1'
+
+      - name: Install CMake 3.26
+        uses: jwlawson/actions-setup-cmake@v1.13
+        with:
+          cmake-version: '3.26.x'
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Build
+        run: |
+          mkdir -p metamodule-plugins
+          cmake -B build -G Ninja \
+            -DINSTALL_DIR=${{ github.workspace }}/metamodule-plugins
+          cmake --build build
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NZZL-plugin
+          path: metamodule-plugins/*.mmplugin
+          if-no-files-found: error
