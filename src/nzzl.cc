@@ -38,7 +38,9 @@ struct NZZL : engine::Module {
     // sequencer state
     int step = 0;
     int clockDivCount = 0;
+    bool running = true;
     dsp::SchmittTrigger clockTrigger;
+    dsp::SchmittTrigger runTrigger;
 
     NZZL() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN);
@@ -71,9 +73,11 @@ struct NZZL : engine::Module {
         int length   = (int)std::round(params[LENGTH_PARAM].getValue());
         int clockDiv = (int)std::round(params[CLOCK_DIV_PARAM].getValue());
 
-        // RUN: high or unpatched = running
-        bool running = !inputs[RUN_INPUT].isConnected()
-                    || inputs[RUN_INPUT].getVoltage() >= 1.f;
+        // RUN: trigger toggles running state; unpatched = always running
+        if (inputs[RUN_INPUT].isConnected()) {
+            if (runTrigger.process(inputs[RUN_INPUT].getVoltage(), 0.1f, 2.f))
+                running = !running;
+        }
 
         // Advance on rising clock edge, gated by RUN and clock divider
         if (clockTrigger.process(inputs[CLOCK_INPUT].getVoltage(), 0.1f, 2.f)) {
