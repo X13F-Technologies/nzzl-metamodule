@@ -1,4 +1,5 @@
 #include "rack.hpp"
+#include "rng.hh"
 
 using namespace rack;
 
@@ -34,6 +35,36 @@ struct NZZL : engine::Module {
         VELOCITY_OUTPUT,
         OUTPUTS_LEN
     };
+
+    static constexpr int MAX_STEPS = 16;
+
+    struct StepData {
+        int   weight;       // 1–16, used by density logic
+        int   pitchIndex;   // raw index into scale (0–15), clamped at playback
+        float gateLength;   // fraction of clock period (0.1–0.9)
+        float velocity;     // 0.0–1.0
+        bool  slide;
+        float octaveRaw;    // 0.0–1.0, scaled by octave_range at playback
+    };
+
+    StepData steps[MAX_STEPS] = {};
+    int      seedIndex = 0;
+    int      lastGroup    = -1;
+    int      lastSubgroup = -1;
+
+    void generateSteps(int group, int subgroup) {
+        seedIndex = (group - 1) * 32 + (subgroup - 1);
+        // Use seed+1 so seed 0 doesn't collapse (xorshift needs non-zero)
+        Xorshift32 rng(uint32_t(seedIndex + 1));
+        for (int i = 0; i < MAX_STEPS; i++) {
+            steps[i].weight     = rng.nextInt(16) + 1;  // 1–16
+            steps[i].pitchIndex = rng.nextInt(16);       // 0–15, clamped to scale at playback
+            steps[i].gateLength = 0.1f + rng.nextFloat() * 0.8f;
+            steps[i].velocity   = rng.nextFloat();
+            steps[i].slide      = rng.nextFloat() < 0.25f;
+            steps[i].octaveRaw  = rng.nextFloat();
+        }
+    }
 
     // sequencer state
     int step = 0;
@@ -72,6 +103,15 @@ struct NZZL : engine::Module {
     void process(const ProcessArgs& args) override {
         int length   = (int)std::round(params[LENGTH_PARAM].getValue());
         int clockDiv = (int)std::round(params[CLOCK_DIV_PARAM].getValue());
+        int group    = (int)std::round(params[GROUP_PARAM].getValue());
+        int subgroup = (int)std::round(params[SUBGROUP_PARAM].getValue());
+
+        // Regenerate step data when seed knobs change
+        if (group != lastGroup || subgroup != lastSubgroup) {
+            lastGroup    = group;
+            lastSubgroup = subgroup;
+            generateSteps(group, subgroup);
+        }
 
         // RUN: trigger toggles running state; unpatched = always running
         if (inputs[RUN_INPUT].isConnected()) {
@@ -90,8 +130,8 @@ struct NZZL : engine::Module {
             }
         }
 
-        // Temporarily output step index as voltage on VELOCITY so it's scopeable
-        outputs[VELOCITY_OUTPUT].setVoltage(step * (10.f / 15.f));
+        // VELOCITY: seed-derived per step (0–10V)
+        outputs[VELOCITY_OUTPUT].setVoltage(steps[step].velocity * 10.f);
     }
 };
 
