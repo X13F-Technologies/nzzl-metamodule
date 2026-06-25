@@ -1,0 +1,5 @@
+build-vcv/
+build/
+metamodule-plugins/
+*.mmplugin
+.DS_Store

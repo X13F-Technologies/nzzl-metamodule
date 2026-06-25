@@ -24,7 +24,7 @@ if(DEFINED RACK_DIR)
             -undefined dynamic_lookup
             -Wl,-no_fixup_chains
         )
-        set_target_properties(NZZL PROPERTIES SUFFIX ".dylib")
+        set_target_properties(NZZL PROPERTIES PREFIX "" OUTPUT_NAME "plugin" SUFFIX ".dylib")
     endif()
 
     # Install into Rack 2 plugins folder so Rack picks it up automatically
