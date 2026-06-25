@@ -67,9 +67,12 @@ struct NZZL : engine::Module {
     }
 
     // sequencer state
-    int step = 0;
-    int clockDivCount = 0;
-    bool running = true;
+    int   step = 0;
+    int   clockDivCount = 0;
+    bool  running = true;
+    float clockPeriod = 0.5f;   // seconds, estimated from clock edges
+    float clockPhase  = 0.f;    // time since last accepted clock edge (seconds)
+    float gateTimer   = 0.f;    // time remaining for current gate high (seconds)
     dsp::SchmittTrigger clockTrigger;
     dsp::SchmittTrigger runTrigger;
 
@@ -119,16 +122,34 @@ struct NZZL : engine::Module {
                 running = !running;
         }
 
-        // Advance on rising clock edge, gated by RUN and clock divider
+        // Clock period estimation and step advance
+        clockPhase += args.sampleTime;
         if (clockTrigger.process(inputs[CLOCK_INPUT].getVoltage(), 0.1f, 2.f)) {
+            // Update period estimate (clamped to sane range: 10ms–4s)
+            if (clockPhase > 0.01f && clockPhase < 4.f)
+                clockPeriod = clockPhase;
+            clockPhase = 0.f;
+
             if (running) {
                 clockDivCount++;
                 if (clockDivCount >= clockDiv) {
                     clockDivCount = 0;
                     step = (step + 1) % length;
+
+                    int density = (int)std::round(params[DENSITY_PARAM].getValue());
+                    bool active = steps[step].weight <= density;
+                    if (active) {
+                        float gateDuration = steps[step].gateLength
+                                           * clockPeriod * clockDiv;
+                        gateTimer = gateDuration;
+                    }
                 }
             }
         }
+
+        // Gate output
+        gateTimer -= args.sampleTime;
+        outputs[GATE_OUTPUT].setVoltage(gateTimer > 0.f ? 10.f : 0.f);
 
         // VELOCITY: seed-derived per step (0–10V)
         outputs[VELOCITY_OUTPUT].setVoltage(steps[step].velocity * 10.f);
