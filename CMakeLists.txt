@@ -16,7 +16,7 @@ if(DEFINED RACK_DIR)
     set(CMAKE_SHARED_LIBRARY_PREFIX "")
 
     add_library(NZZL MODULE)
-    target_sources(NZZL PRIVATE src/plugin.cc)
+    target_sources(NZZL PRIVATE src/plugin.cc src/nzzl.cc)
     target_include_directories(NZZL PRIVATE src ${RACK_DIR}/include ${RACK_DIR}/dep/include)
 
     if(APPLE)
@@ -52,7 +52,7 @@ else()
 
     add_library(NZZL STATIC)
     target_include_directories(NZZL PRIVATE src)
-    target_sources(NZZL PRIVATE src/plugin.cc)
+    target_sources(NZZL PRIVATE src/plugin.cc src/nzzl.cc)
 
     if("${INSTALL_DIR}" STREQUAL "")
         set(INSTALL_DIR ${CMAKE_CURRENT_LIST_DIR}/metamodule-plugins)

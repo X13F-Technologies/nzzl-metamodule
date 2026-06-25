@@ -2,7 +2,9 @@
 
 rack::Plugin* pluginInstance;
 
+extern rack::plugin::Model* modelNZZL;
+
 void init(rack::Plugin* p) {
     pluginInstance = p;
-    // modules registered here as the plugin grows
+    p->addModel(modelNZZL);
 }

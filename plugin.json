@@ -5,5 +5,12 @@
   "license": "GPL-3.0-or-later",
   "brand": "X13F",
   "author": "X13F-Technologies",
-  "modules": []
+  "modules": [
+    {
+      "slug": "NZZL",
+      "name": "NZZL",
+      "description": "Deterministic generative bassline sequencer",
+      "tags": ["Sequencer"]
+    }
+  ]
 }
