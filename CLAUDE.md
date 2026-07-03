@@ -38,6 +38,31 @@ git push   # artifact downloadable via: gh run download
 - Commit and push at each working checkpoint. If push returns 403 for
   MiGenteClothing, run `gh auth switch -u X13F-Technologies`.
 
+## Reporting testing responsibility (required every task)
+
+When you finish implementing any task or change, your summary to the user
+MUST end with two clearly labeled sections:
+
+```
+✅ AUTOMATED (already verified — no action needed)
+- <what the native harness verified, with test names>
+
+🖐 MANUAL TEST NEEDED (user, in VCV Rack / on hardware)
+- <numbered, concrete steps: what to patch, what to turn, what to expect>
+```
+
+Rules:
+- Never mark something automated unless a test in `tests/` actually covers
+  it and passed in this session. Realtime logic in `nzzl.cc` (triggers,
+  timers, voltages) is manual unless it has been extracted into a pure
+  header with tests.
+- If nothing needs manual testing, say so explicitly rather than omitting
+  the section.
+- The per-task Claude/user test split is pre-planned in
+  [docs/DESIGN.md](docs/DESIGN.md) § "Per-task test plan" — follow it.
+- Do not mark a task ✅ in the DESIGN.md status table until the user
+  confirms the manual portion.
+
 ## Project status
 
 Track progress against the implementation order in
