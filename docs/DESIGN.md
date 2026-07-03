@@ -78,14 +78,34 @@ MetaModule (CI ARM cross-compile) via the SDK's rack-interface shim.
 
 ## Testing strategy
 
-- **Claude-runnable (native harness):** determinism, density linearity, seed
-  distinctness, value ranges, attribute isolation — all 1024 seeds, every
-  change. Extend `test_pattern.cc` when adding pure logic (scales → test
-  quantization; arp → test ordering; styles → test statistical bias).
-- **User-tested (VCV Rack, by ear/scope):** realtime jack behavior, gate
-  timing feel, musicality of styles, knob response.
-- **Hardware-tested (MetaModule):** display rendering, patch save/load,
-  CPU load. Only after features stabilize.
+Three tiers. Claude runs tier 1 via `./tests/run_tests.sh` after every
+pure-logic change; the user runs tier 2 in VCV Rack; tier 3 needs hardware.
+
+**Current coverage honestly stated:** the harness covers pattern *generation*
+only. Realtime sequencer behavior in `nzzl.cc` (clock edges, run toggle,
+gate timers, output voltages) is NOT covered by the harness — it is
+user-tested in Rack. If realtime logic grows complex, extract it into a pure
+`engine.hh` (a step-machine struct fed fake time/voltage samples) to make it
+Claude-testable too. Consider this at Task 7 (slide) when timing logic gets
+harder to eyeball.
+
+### Per-task test plan (Claude = native harness, User = VCV Rack)
+
+| Task | Claude tests (add to test_pattern.cc) | User tests in Rack |
+|------|----------------------------------------|--------------------|
+| 4 gate/density | ✅ weight permutation ⇒ density exactness (done) | gates fire irregularly; DENSITY sweep adds one step per click; same seed+density = same pattern; gate length scales with tempo |
+| 5 scales/pitch | quantizer maps every (scale, root, degree, octave) to correct semitone/voltage; all 12 scales' interval tables match music theory; scale-lock-off maps raw 0–5 V; octave range never exceeds knob setting | pitch output plays in-key through a VCO; root knob transposes; lock-off sounds unquantized |
+| 6 velocity | ✅ range test (done) | velocity varies per note, holds during silence |
+| 7 slide | if extracted to engine.hh: glide reaches target within slide time, no overshoot; slide=0 ⇒ instantaneous | glide audible on flagged steps, SLIDE knob CCW kills it |
+| 8 styles | statistical: bassline seeds (groups 1–10) bias pitch toward degrees 0/4 and beats 1/3; random seeds ~uniform; per-style gate-length distributions differ. Assert on aggregate counts across all seeds in each zone | zones sound distinct by ear |
+| 9 reseed | reseed maps any seed_index 0–1023 back to correct group/subgroup knob values (round-trip) | trigger changes pattern, knobs jump to match |
+| 10 CV inputs | CV→value mapping functions (voltage → scale index, root, seed offset) are pure — test the mapping tables/clamping | LFO into CV ROOT shifts key smoothly |
+| 11 display | zone-name lookup (group,subgroup → "BASS"/"ARP↑"/…) is pure — test all 1024 | display renders on hardware |
+| 12 patch save | if state serialization is factored into a pure helper: round-trip seed_index through it | save/reload patch in Rack restores seed |
+
+Rule of thumb: **before implementing each task, factor the decision logic
+into a pure function in a header, write its test, then wire it into
+`nzzl.cc`.** The Rack adapter should stay too thin to hide bugs.
 
 ---
 
