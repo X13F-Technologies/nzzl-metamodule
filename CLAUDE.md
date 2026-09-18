@@ -3,6 +3,11 @@
 Deterministic generative bassline/sequencer module for 4ms MetaModule hardware,
 developed and tested locally as a VCV Rack 2 plugin.
 
+**Project backlog:** NZZL is item 1 in the X13F software backlog —
+`~/Documents/x13f-backlog/X13F_Backlog.md`
+(https://github.com/X13F-Technologies/x13f-backlog). Update that item's status
+there when this project's status changes.
+
 **Before making any changes, read [docs/DESIGN.md](docs/DESIGN.md)** — it records
 the architecture rules, determinism invariants, and design decisions already made.
 Violating them (especially the RNG stream isolation) silently breaks users' saved
