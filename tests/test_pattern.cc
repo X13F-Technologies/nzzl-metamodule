@@ -110,7 +110,9 @@ static void test_ranges() {
 // draws the weight stream makes (guards patch stability across versions)
 static void test_attribute_isolation() {
     StepData s[MAX_STEPS];
-    generatePattern(42, s);
+    // The base generator is what owns stream isolation; the Task 8 style layer
+    // deliberately rewrites some attributes afterwards from its own salt.
+    generateBasePattern(42, s);
     auto rng = attrRng(42, SALT_PITCH);
     for (int i = 0; i < MAX_STEPS; i++) {
         int expected = rng.nextInt(16);
