@@ -12,11 +12,11 @@ using namespace nzzl;
 
 static const char* NOTE[12] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
 
-// Reference settings: Natural Minor, root C, 2 octaves, scale lock on.
+// Reference settings: Natural Minor (scale index 3), root C, 2 octaves.
 static void dump(int seed) {
     StepData s[MAX_STEPS];
     generatePattern(seed, s);
-    QuantizeParams p{ 2, 0, 2, true };
+    QuantizeParams p{ 3, 0, 2 };
 
     printf("\n### seed_index %d  (GROUP %d / SUBGROUP %d)\n\n",
            seed, seed / 32 + 1, seed % 32 + 1);

@@ -25,6 +25,7 @@ static const float EPS = 1e-4f;
 // scales.hh — a typo in the shipping table has to disagree with this one.
 struct RefScale { const char* name; int n; int iv[12]; };
 static const RefScale kRef[NUM_SCALES] = {
+    { "RAW",      0, {} },                        // index 0 is not a scale
     { "CHROM",   12, {0,1,2,3,4,5,6,7,8,9,10,11} },
     { "MAJOR",    7, {0,2,4,5,7,9,11} },          // W W H W W W H
     { "MINOR",    7, {0,2,3,5,7,8,10} },          // W H W W H W W
@@ -36,8 +37,10 @@ static const RefScale kRef[NUM_SCALES] = {
     { "HARM MIN", 7, {0,2,3,5,7,8,11} },          // minor with major 7th
     { "MEL MIN",  7, {0,2,3,5,7,9,11} },          // minor with major 6+7
     { "MIN PENT", 5, {0,3,5,7,10} },
-    { "BLUES",    6, {0,3,5,6,7,10} },            // min pent + b5
 };
+
+// The first real scale. Index 0 is RAW and has no intervals to check.
+static const int FIRST_SCALE = 1;
 
 static bool scaleContains(const Scale& sc, int semitone) {
     for (int i = 0; i < sc.noteCount; i++)
@@ -48,7 +51,13 @@ static bool scaleContains(const Scale& sc, int semitone) {
 // Every shipped interval table matches music theory, is ascending,
 // duplicate-free, and stays inside one octave.
 static void test_scale_tables() {
-    for (int s = 0; s < NUM_SCALES; s++) {
+    // Index 0 is the unquantized slot, not a scale.
+    CHECK(isUnquantized(SCALE_RAW), "index 0 is not flagged unquantized");
+    CHECK(getScale(SCALE_RAW).noteCount == 0, "the RAW slot must have no intervals");
+    for (int s = FIRST_SCALE; s < NUM_SCALES; s++)
+        CHECK(!isUnquantized(s), "scale index %d wrongly flagged unquantized", s);
+
+    for (int s = FIRST_SCALE; s < NUM_SCALES; s++) {
         const Scale& sc = getScale(s);
         const RefScale& ref = kRef[s];
 
@@ -69,8 +78,8 @@ static void test_scale_tables() {
         }
         CHECK(sc.intervals[0] == 0, "scale %d (%s) does not start on the root", s, sc.name);
     }
-    printf("scale tables: all %d tables match reference, ascending, in-octave\n",
-           NUM_SCALES);
+    printf("scale tables: index 0 is RAW; all %d tables match reference, "
+           "ascending, in-octave\n", NUM_SCALES - FIRST_SCALE);
 }
 
 // Out-of-range scale indices clamp instead of reading past the table.
@@ -83,7 +92,7 @@ static void test_scale_index_clamping() {
 // pitchIndex -> degree: in range, monotonic (contour preserved), and every
 // degree of every scale is reachable (no dead notes).
 static void test_degree_mapping() {
-    for (int s = 0; s < NUM_SCALES; s++) {
+    for (int s = FIRST_SCALE; s < NUM_SCALES; s++) {
         const Scale& sc = getScale(s);
         bool reached[MAX_SCALE_NOTES] = {};
         int prev = -1;
@@ -131,11 +140,11 @@ static void test_quantized_notes_in_scale() {
     for (int seed = 0; seed < 1024; seed++) {
         StepData st[MAX_STEPS];
         generatePattern(seed, st);
-        for (int s = 0; s < NUM_SCALES; s++) {
+        for (int s = FIRST_SCALE; s < NUM_SCALES; s++) {
             const Scale& sc = getScale(s);
             for (int root = 0; root < 12; root++) {
                 for (int range = 1; range <= 5; range++) {
-                    QuantizeParams p{ s, root, range, true };
+                    QuantizeParams p{ s, root, range };
                     for (int i = 0; i < MAX_STEPS; i++) {
                         float v = pitchVoltage(st[i], p);
 
@@ -168,14 +177,14 @@ static void test_quantized_notes_in_scale() {
 
 // ROOT is a pure transpose: root r must equal root 0 shifted by r/12 V.
 static void test_root_transposes() {
-    for (int s = 0; s < NUM_SCALES; s++) {
+    for (int s = FIRST_SCALE; s < NUM_SCALES; s++) {
         for (int idx = 0; idx < MAX_STEPS; idx++) {
             for (int range = 1; range <= 5; range++) {
                 float raw = 0.37f;
-                QuantizeParams base{ s, 0, range, true };
+                QuantizeParams base{ s, 0, range };
                 float v0 = quantizedVoltage(idx, raw, base);
                 for (int root = 0; root < 12; root++) {
-                    QuantizeParams p{ s, root, range, true };
+                    QuantizeParams p{ s, root, range };
                     float v = quantizedVoltage(idx, raw, p);
                     CHECK(std::fabs(v - (v0 + float(root) / 12.f)) < EPS,
                           "scale %d idx %d root %d: %f != %f + %d/12",
@@ -187,12 +196,74 @@ static void test_root_transposes() {
     printf("root: transposes the whole pattern exactly, all scales\n");
 }
 
+
+// Shifting ROOT must never knock a note off the semitone grid or out of key.
+// Root is a whole-semitone transpose, so for every root the pattern must use
+// the SAME scale degrees — only the key moves.
+static void test_root_stays_quantized() {
+    for (int seed = 0; seed < 256; seed++) {
+        StepData st[MAX_STEPS];
+        generatePattern(seed, st);
+        for (int sc = FIRST_SCALE; sc < NUM_SCALES; sc++) {
+            const Scale& scale = getScale(sc);
+            for (int range = 1; range <= 5; range++) {
+                // degrees played at root C — the baseline to compare against
+                int baseRel[MAX_STEPS];
+                {
+                    QuantizeParams p{ sc, 0, range };
+                    for (int i = 0; i < MAX_STEPS; i++) {
+                        int semi = int(std::lround(pitchVoltage(st[i], p) * 12.f));
+                        baseRel[i] = ((semi - 0) % 12 + 12) % 12;
+                    }
+                }
+                for (int root = 1; root < 12; root++) {
+                    QuantizeParams p{ sc, root, range };
+                    for (int i = 0; i < MAX_STEPS; i++) {
+                        float v = pitchVoltage(st[i], p);
+
+                        // still exactly on the semitone grid
+                        float semiF = v * 12.f;
+                        int   semi  = int(std::lround(semiF));
+                        CHECK(std::fabs(semiF - float(semi)) < EPS,
+                              "seed %d scale %s root %d: %f V left the semitone grid",
+                              seed, scale.name, root, v);
+
+                        // still in key, and on the SAME degree as at root C
+                        int rel = ((semi - root) % 12 + 12) % 12;
+                        CHECK(scaleContains(scale, rel),
+                              "seed %d scale %s root %d step %d: %d out of key",
+                              seed, scale.name, root, i, rel);
+                        CHECK(rel == baseRel[i],
+                              "seed %d scale %s root %d step %d: degree changed "
+                              "from %d to %d — root did more than transpose",
+                              seed, scale.name, root, i, baseRel[i], rel);
+                    }
+                }
+            }
+        }
+    }
+    // Unquantized mode: root must still be an exact semitone offset, so the
+    // raw pattern shifts by a musical interval rather than drifting.
+    for (int idx = 0; idx < MAX_STEPS; idx++) {
+        StepData st{}; st.pitchIndex = idx; st.octaveRaw = 0.62f;
+        QuantizeParams base{ SCALE_RAW, 0, 3 };
+        float v0 = pitchVoltage(st, base);
+        for (int root = 0; root < 12; root++) {
+            QuantizeParams p{ SCALE_RAW, root, 3 };
+            CHECK(std::fabs(pitchVoltage(st, p) - (v0 + float(root) / 12.f)) < EPS,
+                  "unquantized: root %d is not an exact semitone offset", root);
+        }
+    }
+    printf("root quantization: every root keeps notes on-grid, in key, "
+           "and on the same degrees\n");
+}
+
 // Melodic contour survives a scale change: higher pitchIndex is never a
 // lower note within the same octave.
 static void test_contour_monotonic() {
-    for (int s = 0; s < NUM_SCALES; s++) {
+    for (int s = FIRST_SCALE; s < NUM_SCALES; s++) {
         for (int root = 0; root < 12; root += 5) {
-            QuantizeParams p{ s, root, 3, true };
+            QuantizeParams p{ s, root, 3 };
             float prev = -1e9f;
             for (int idx = 0; idx < MAX_STEPS; idx++) {
                 float v = quantizedVoltage(idx, 0.f, p);   // fix octave at 0
@@ -214,7 +285,7 @@ static void test_raw_mode() {
     for (int seed = 0; seed < 1024; seed++) {
         StepData st[MAX_STEPS];
         generatePattern(seed, st);
-        QuantizeParams p{ 2, 0, 5, false };        // lock off, root 0, 5 octaves
+        QuantizeParams p{ SCALE_RAW, 0, 5 };       // unquantized, root 0, 5 octaves
         for (int i = 0; i < MAX_STEPS; i++) {
             float v = pitchVoltage(st[i], p);
             CHECK(v >= 0.f && v < 5.f, "seed %d raw voltage %f outside 0–5 V", seed, v);
@@ -230,14 +301,23 @@ static void test_raw_mode() {
     CHECK(offGrid > total / 2,
           "raw mode is not audibly unquantized: only %d of %d notes off-grid",
           offGrid, total);
-    // lock on vs lock off must actually differ
-    QuantizeParams on{ 2, 0, 5, true }, off{ 2, 0, 5, false };
+    // position 0 must actually differ from a real scale
+    QuantizeParams scale{ 3, 0, 5 }, raw{ SCALE_RAW, 0, 5 };
     int differs = 0;
-    for (int idx = 0; idx < MAX_STEPS; idx++)
-        if (std::fabs(quantizedVoltage(idx, 0.4f, on) - rawVoltage(idx, 0.4f, off)) > EPS)
+    for (int idx = 0; idx < MAX_STEPS; idx++) {
+        StepData st{}; st.pitchIndex = idx; st.octaveRaw = 0.4f;
+        if (std::fabs(pitchVoltage(st, scale) - pitchVoltage(st, raw)) > EPS)
             differs++;
-    CHECK(differs > 8, "scale lock on/off barely differ (%d of 16 steps)", differs);
-    printf("raw mode: 0–5 V, off the semitone grid (%d/%d notes), distinct from locked\n",
+    }
+    CHECK(differs > 8, "scale position 0 barely differs from a scale (%d of 16)", differs);
+
+    // quantizedVoltage must never quantize against the empty RAW table
+    for (int idx = 0; idx < MAX_STEPS; idx++) {
+        StepData st{}; st.pitchIndex = idx; st.octaveRaw = 0.4f;
+        CHECK(std::fabs(quantizedVoltage(idx, 0.4f, raw) - pitchVoltage(st, raw)) < EPS,
+              "quantizedVoltage did not fall back to raw at index %d", idx);
+    }
+    printf("raw mode: scale position 0 is unquantized, 0–5 V, off-grid (%d/%d notes)\n",
            offGrid, total);
 }
 
@@ -247,7 +327,7 @@ static void test_pitch_determinism() {
         StepData a[MAX_STEPS], b[MAX_STEPS];
         generatePattern(seed, a);
         generatePattern(seed, b);
-        QuantizeParams p{ seed % NUM_SCALES, seed % 12, 1 + (seed % 5), (seed % 3) != 0 };
+        QuantizeParams p{ seed % NUM_SCALES, seed % 12, 1 + (seed % 5) };
         for (int i = 0; i < MAX_STEPS; i++)
             CHECK(pitchVoltage(a[i], p) == pitchVoltage(b[i], p),
                   "seed %d step %d pitch not deterministic", seed, i);
@@ -262,6 +342,7 @@ int main() {
     test_octave_range();
     test_quantized_notes_in_scale();
     test_root_transposes();
+    test_root_stays_quantized();
     test_contour_monotonic();
     test_raw_mode();
     test_pitch_determinism();

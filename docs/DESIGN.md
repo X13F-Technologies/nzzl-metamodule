@@ -66,23 +66,38 @@ MetaModule (CI ARM cross-compile) via the SDK's rack-interface shim.
 
 ## Pitch mapping (Task 5)
 
+**Position 0 is UNQUANTIZED, not a scale.** There is no separate SCALE LOCK
+switch — it was folded into the SCALE knob (user decision, 2026-09-20).
+
+*Why:* one control now answers the whole question "how are these notes
+pitched?" instead of two that interact. It frees a panel position, which
+matters on MetaModule, and it means CV SCALE (Task 10) can sweep into and out
+of raw mode without a second CV input. **The cost, accepted knowingly:** you
+can no longer A/B back to the scale you had — going to raw and back means
+finding your scale again on the knob. Blues was dropped to make room.
+
 **Scale order is an on-disk contract.** `SCALE_PARAM` stores an index, so
 inserting a scale mid-list would retune every saved patch. **Append only,
 never reorder.** The frozen order is:
 
 | # | Scale | # | Scale |
 |---|-------|---|-------|
-| 0 | Chromatic | 6 | Lydian |
-| 1 | Major | 7 | Mixolydian |
-| 2 | Natural Minor *(default)* | 8 | Harmonic Minor |
-| 3 | Dorian | 9 | Melodic Minor |
-| 4 | Phrygian | 10 | Minor Pentatonic |
-| 5 | Phrygian Dominant | 11 | Blues |
+| **0** | **Unquantized** | 6 | Phrygian Dominant |
+| 1 | Chromatic | 7 | Lydian |
+| 2 | Major | 8 | Mixolydian |
+| 3 | Natural Minor *(default)* | 9 | Harmonic Minor |
+| 4 | Dorian | 10 | Melodic Minor |
+| 5 | Phrygian | 11 | Minor Pentatonic |
 
-*Why this set:* twelve slots were fixed by the knob range. Locrian and major
-pentatonic were dropped in favour of Phrygian Dominant and Blues, which earn
-their place in a bassline module. Verified against an independently written
-reference table in `test_scale_tables`.
+*Why this set:* twelve slots were fixed by the knob range, and position 0 now
+spends one of them on raw mode. Locrian, major pentatonic and Blues are the
+casualties. Verified against an independently written reference table in
+`test_scale_tables`.
+
+The RAW entry in the table carries `noteCount == 0` and no intervals.
+`quantizedVoltage` falls back to `rawVoltage` if it is ever handed that entry,
+so a caller that skips the `isUnquantized()` check degrades gracefully instead
+of reading an empty interval array.
 
 **Degree mapping is proportional, not modulo.**
 `degree = pitchIndex * noteCount / 16`. *Why:* a modulo mapping wraps —
@@ -92,7 +107,7 @@ proportional map is monotonic, so the step that was the pattern's highest note
 stays its highest note in every scale. Verified by `test_degree_mapping` and
 `test_contour_monotonic`.
 
-**Voltage formula (scale lock ON):**
+**Voltage formula (any real scale):**
 `V = octave + (root + interval) / 12`, where `octave = int(octaveRaw × octaveRange)`
 clamped to `[0, octaveRange-1]`. The octave spread is therefore exactly the
 OCTAVE RANGE knob; ROOT adds a further 0–11/12 V on top, which is intended —
@@ -100,16 +115,29 @@ it transposes the whole pattern. Verified by `test_quantized_notes_in_scale`
 (11.8M notes: every one lands on an exact semitone that belongs to the scale,
 within the octave range) and `test_root_transposes`.
 
-**Scale lock OFF** divides each octave into 16 equal steps (75 cents) rather
-than emitting a continuous voltage. *Why:* the module only has 16 discrete
-pitch indices, so "raw" has to mean *off the semitone grid*, not *smooth*.
-74% of generated notes land audibly off-grid; range is 0–5 V at OCTAVE RANGE 5.
-Verified by `test_raw_mode`.
+**Scale position 0 (unquantized)** divides each octave into 16 equal steps
+(75 cents) rather than emitting a continuous voltage. *Why:* the module only
+has 16 discrete pitch indices, so "raw" has to mean *off the semitone grid*,
+not *smooth*. 74% of generated notes land audibly off-grid; range is 0–5 V at
+OCTAVE RANGE 5. Verified by `test_raw_mode`.
+
+**ROOT only ever adds a whole number of semitones.** This is an invariant, not
+an implementation detail: transposing must never knock a quantized note off
+the grid or out of key. `test_root_stays_quantized` asserts, for 256 seeds ×
+11 scales × 5 octave ranges × all 12 roots, that every note stays on an exact
+semitone, stays in key, **and lands on the same scale degree as it did at root
+C** — proving ROOT transposes and does nothing else. It holds in raw mode too:
+root there is an exact semitone offset applied to the microtonal pattern.
+
+**Consequence for Task 10:** CV ROOT must quantize to integer semitones before
+it reaches the formula. A smooth CV passed straight through would de-quantize
+the output and break the invariant above. Same for CV SCALE — it must land on
+discrete scale indices.
 
 **Pitch is latched at gate onset, quantized every sample.** The step's
 `pitchIndex` / `octaveRaw` are sample-and-held exactly like velocity (silent
 steps don't retrigger a new note), but the quantizer re-runs continuously, so
-turning ROOT / SCALE / OCTAVE RANGE transposes the currently-held note
+turning ROOT / SCALE / OCTAVE RANGE re-pitches the currently-held note
 immediately instead of waiting for the next gate. This half lives in
 `nzzl.cc` and is **user-tested, not harness-tested.**
 
@@ -147,7 +175,7 @@ harder to eyeball.
 | Task | Claude tests (add to test_pattern.cc) | User tests in Rack |
 |------|----------------------------------------|--------------------|
 | 4 gate/density | ✅ weight permutation ⇒ density exactness (done) | gates fire irregularly; DENSITY sweep adds one step per click; same seed+density = same pattern; gate length scales with tempo |
-| 5 scales/pitch | ✅ all four done: semitone/voltage correctness over 11.8M cases, interval tables vs. independent reference, raw mode 0–5 V and off-grid, octave never exceeds knob. Plus contour monotonicity and index clamping. | pitch output plays in-key through a VCO; root knob transposes; lock-off sounds unquantized |
+| 5 scales/pitch | ✅ all four done: semitone/voltage correctness over 10.8M cases, interval tables vs. independent reference, raw mode (scale position 0) 0–5 V and off-grid, octave never exceeds knob. Plus contour monotonicity, index clamping, and root-stays-quantized. | pitch output plays in-key through a VCO; root knob transposes; lock-off sounds unquantized |
 | 6 velocity | ✅ range test (done) | velocity varies per note, holds during silence |
 | 7 slide | if extracted to engine.hh: glide reaches target within slide time, no overshoot; slide=0 ⇒ instantaneous | glide audible on flagged steps, SLIDE knob CCW kills it |
 | 8 styles | statistical: bassline seeds (groups 1–10) bias pitch toward degrees 0/4 and beats 1/3; random seeds ~uniform; per-style gate-length distributions differ. Assert on aggregate counts across all seeds in each zone | zones sound distinct by ear |
@@ -186,9 +214,9 @@ sweep 1→16 adds steps one at a time; same seed+density = identical pattern;
 gate duration scales with clock tempo.
 
 **Task 5 test checklist (pending):** pitch plays in key through a VCO; ROOT
-transposes; SCALE sweep changes colour without scrambling the melodic shape;
-OCTAVE RANGE widens the spread; SCALE LOCK off sounds microtonal; knob turns
-transpose the held note immediately. Full procedure in
+transposes and stays in key; SCALE sweep changes colour without scrambling the
+melodic shape; OCTAVE RANGE widens the spread; SCALE position 0 sounds
+microtonal; knob turns re-pitch the held note immediately. Full procedure in
 [SYSTEM_TEST_GUIDE.md](SYSTEM_TEST_GUIDE.md).
 
 ---
@@ -204,3 +232,5 @@ transpose the held note immediately. Full procedure in
   invariant, decide at Task 8. Likely: generate permutation, then bias which
   *positions* get low weights, keeping the permutation property.
 - **CV SEED semantics** (offset vs absolute) — decide at Task 10.
+- **The panel position freed by SCALE LOCK** is unassigned. Don't spend it
+  without a reason; an empty slot is cheaper than a control nobody uses.
