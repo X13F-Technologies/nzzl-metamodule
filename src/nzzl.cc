@@ -1,5 +1,6 @@
 #include "rack.hpp"
 #include "pattern.hh"
+#include "scales.hh"
 
 using namespace rack;
 
@@ -54,6 +55,8 @@ struct NZZL : engine::Module {
     float clockPhase  = 0.f;    // time since last accepted clock edge (seconds)
     float gateTimer   = 0.f;    // time remaining for current gate high (seconds)
     float heldVelocity = 0.f;   // latched at gate onset (sample-and-hold)
+    int   heldPitchIndex = 0;   // latched at gate onset; knobs re-quantize it live
+    float heldOctaveRaw  = 0.f;
     dsp::SchmittTrigger clockTrigger;
     dsp::SchmittTrigger runTrigger;
 
@@ -66,9 +69,14 @@ struct NZZL : engine::Module {
         configParam(LENGTH_PARAM,     2.f, 16.f, 16.f, "Length",       " steps");
         configParam(CLOCK_DIV_PARAM,  1.f, 16.f, 1.f,  "Clock Divide", "÷");
         configParam(OCTAVE_RANGE_PARAM,1.f, 5.f, 2.f,  "Octave Range", " oct");
-        configParam(ROOT_PARAM,       0.f, 11.f, 0.f,  "Root Note");
-        configParam(SCALE_PARAM,      0.f, 11.f, 0.f,  "Scale");
-        configParam(SCALE_LOCK_PARAM, 0.f, 1.f,  1.f,  "Scale Lock");
+        configSwitch(ROOT_PARAM,  0.f, 11.f, 0.f, "Root Note",
+            {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"});
+        configSwitch(SCALE_PARAM, 0.f, float(nzzl::NUM_SCALES - 1), 2.f, "Scale",
+            {"Chromatic", "Major", "Natural Minor", "Dorian", "Phrygian",
+             "Phrygian Dominant", "Lydian", "Mixolydian", "Harmonic Minor",
+             "Melodic Minor", "Minor Pentatonic", "Blues"});
+        configSwitch(SCALE_LOCK_PARAM, 0.f, 1.f, 1.f, "Scale Lock",
+            {"Off (unquantized)", "On"});
         configParam(SLIDE_PARAM,      0.f, 1.f,  0.f,  "Slide");
 
         configInput(CLOCK_INPUT,    "Clock");
@@ -123,7 +131,9 @@ struct NZZL : engine::Module {
                         float gateDuration = steps[step].gateLength
                                            * clockPeriod * clockDiv;
                         gateTimer = gateDuration;
-                        heldVelocity = steps[step].velocity;
+                        heldVelocity   = steps[step].velocity;
+                        heldPitchIndex = steps[step].pitchIndex;
+                        heldOctaveRaw  = steps[step].octaveRaw;
                     }
                 }
             }
@@ -135,6 +145,18 @@ struct NZZL : engine::Module {
 
         // VELOCITY: latched at gate onset, held through silent steps (0–10V)
         outputs[VELOCITY_OUTPUT].setVoltage(heldVelocity * 10.f);
+
+        // CV PITCH: the step is latched at gate onset, but the quantizer runs
+        // every sample so turning ROOT / SCALE / OCTAVE transposes the held
+        // note immediately instead of waiting for the next gate.
+        nzzl::QuantizeParams qp;
+        qp.scaleIndex  = (int)std::round(params[SCALE_PARAM].getValue());
+        qp.root        = (int)std::round(params[ROOT_PARAM].getValue());
+        qp.octaveRange = (int)std::round(params[OCTAVE_RANGE_PARAM].getValue());
+        qp.scaleLock   = params[SCALE_LOCK_PARAM].getValue() > 0.5f;
+        outputs[CV_PITCH_OUTPUT].setVoltage(
+            qp.scaleLock ? nzzl::quantizedVoltage(heldPitchIndex, heldOctaveRaw, qp)
+                         : nzzl::rawVoltage(heldPitchIndex, heldOctaveRaw, qp));
     }
 };
 

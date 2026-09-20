@@ -8,6 +8,10 @@ developed and tested locally as a VCV Rack 2 plugin.
 (https://github.com/X13F-Technologies/x13f-backlog). Update that item's status
 there when this project's status changes.
 
+**Full manual acceptance procedure:** [docs/SYSTEM_TEST_GUIDE.md](docs/SYSTEM_TEST_GUIDE.md)
+— the numbered test IDs (T5.9, T4.4, …) to cite when asking the user to test
+something, and the acceptance criteria for tasks not yet built.
+
 **Before making any changes, read [docs/DESIGN.md](docs/DESIGN.md)** — it records
 the architecture rules, determinism invariants, and design decisions already made.
 Violating them (especially the RNG stream isolation) silently breaks users' saved
@@ -33,7 +37,7 @@ git push   # artifact downloadable via: gh run download
   no `random::` calls in `process()`. The only non-deterministic moment is
   the RESEED trigger.
 - **Pure logic goes in headers under `src/` with no `rack.hpp` include**
-  (`rng.hh`, `pattern.hh`, future `scales.hh`) so the native test harness
+  (`rng.hh`, `pattern.hh`, `scales.hh`) so the native test harness
   can compile it. `nzzl.cc` is a thin Rack adapter only.
 - **Never change how an existing attribute consumes its RNG stream** — each
   attribute has its own salted stream precisely so patches survive upgrades.
@@ -65,6 +69,9 @@ Rules:
   the section.
 - The per-task Claude/user test split is pre-planned in
   [docs/DESIGN.md](docs/DESIGN.md) § "Per-task test plan" — follow it.
+- Write manual steps as references to test IDs in
+  [docs/SYSTEM_TEST_GUIDE.md](docs/SYSTEM_TEST_GUIDE.md) where they already
+  exist, and add new ones to that guide rather than inventing ad-hoc steps.
 - Do not mark a task ✅ in the DESIGN.md status table until the user
   confirms the manual portion.
 
