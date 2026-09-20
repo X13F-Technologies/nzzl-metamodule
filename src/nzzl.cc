@@ -1,6 +1,7 @@
 #include "rack.hpp"
 #include "pattern.hh"
 #include "scales.hh"
+#include "engine.hh"
 
 using namespace rack;
 
@@ -46,18 +47,10 @@ struct NZZL : engine::Module {
         nzzl::generatePattern(seedIndex, steps);
     }
 
-    // sequencer state
-    int   step = 0;
-    int   clockDivCount = 0;
-    bool  running = true;
-    float clockPeriod = 0.5f;   // seconds, estimated from clock edges
-    float clockPhase  = 0.f;    // time since last accepted clock edge (seconds)
-    float gateTimer   = 0.f;    // time remaining for current gate high (seconds)
-    float heldVelocity = 0.f;   // latched at gate onset (sample-and-hold)
-    int   heldPitchIndex = 0;   // latched at gate onset; knobs re-quantize it live
-    float heldOctaveRaw  = 0.f;
-    dsp::SchmittTrigger clockTrigger;
-    dsp::SchmittTrigger runTrigger;
+    // All sequencer state and timing lives in the pure engine (engine.hh),
+    // so it can be driven by the native test harness. This file only maps
+    // params and jacks onto it.
+    nzzl::Engine engine;
 
     NZZL() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN);
@@ -92,8 +85,6 @@ struct NZZL : engine::Module {
     }
 
     void process(const ProcessArgs& args) override {
-        int length   = (int)std::round(params[LENGTH_PARAM].getValue());
-        int clockDiv = (int)std::round(params[CLOCK_DIV_PARAM].getValue());
         int group    = (int)std::round(params[GROUP_PARAM].getValue());
         int subgroup = (int)std::round(params[SUBGROUP_PARAM].getValue());
 
@@ -104,58 +95,27 @@ struct NZZL : engine::Module {
             generateSteps(group, subgroup);
         }
 
-        // RUN: trigger toggles running state; unpatched = always running
-        if (inputs[RUN_INPUT].isConnected()) {
-            if (runTrigger.process(inputs[RUN_INPUT].getVoltage(), 0.1f, 2.f))
-                running = !running;
-        }
+        nzzl::EngineParams p;
+        p.density  = (int)std::round(params[DENSITY_PARAM].getValue());
+        p.length   = (int)std::round(params[LENGTH_PARAM].getValue());
+        p.clockDiv = (int)std::round(params[CLOCK_DIV_PARAM].getValue());
+        p.slide    = params[SLIDE_PARAM].getValue();
+        p.quant.scaleIndex  = (int)std::round(params[SCALE_PARAM].getValue());
+        p.quant.root        = (int)std::round(params[ROOT_PARAM].getValue());
+        p.quant.octaveRange = (int)std::round(params[OCTAVE_RANGE_PARAM].getValue());
 
-        // Clock period estimation and step advance
-        clockPhase += args.sampleTime;
-        if (clockTrigger.process(inputs[CLOCK_INPUT].getVoltage(), 0.1f, 2.f)) {
-            // Update period estimate (clamped to sane range: 10ms–4s)
-            if (clockPhase > 0.01f && clockPhase < 4.f)
-                clockPeriod = clockPhase;
-            clockPhase = 0.f;
+        nzzl::EngineInputs in;
+        in.clock           = inputs[CLOCK_INPUT].getVoltage();
+        in.run             = inputs[RUN_INPUT].getVoltage();
+        in.reseed          = inputs[RESEED_INPUT].getVoltage();
+        in.runConnected    = inputs[RUN_INPUT].isConnected();
+        in.reseedConnected = inputs[RESEED_INPUT].isConnected();
 
-            if (running) {
-                clockDivCount++;
-                if (clockDivCount >= clockDiv) {
-                    clockDivCount = 0;
-                    step = (step + 1) % length;
+        nzzl::EngineOutputs out = engine.process(args.sampleTime, in, steps, p);
 
-                    int density = (int)std::round(params[DENSITY_PARAM].getValue());
-                    bool active = steps[step].weight <= density;
-                    if (active) {
-                        float gateDuration = steps[step].gateLength
-                                           * clockPeriod * clockDiv;
-                        gateTimer = gateDuration;
-                        heldVelocity   = steps[step].velocity;
-                        heldPitchIndex = steps[step].pitchIndex;
-                        heldOctaveRaw  = steps[step].octaveRaw;
-                    }
-                }
-            }
-        }
-
-        // Gate output
-        gateTimer -= args.sampleTime;
-        outputs[GATE_OUTPUT].setVoltage(gateTimer > 0.f ? 10.f : 0.f);
-
-        // VELOCITY: latched at gate onset, held through silent steps (0–10V)
-        outputs[VELOCITY_OUTPUT].setVoltage(heldVelocity * 10.f);
-
-        // CV PITCH: the step is latched at gate onset, but the quantizer runs
-        // every sample so turning ROOT / SCALE / OCTAVE transposes the held
-        // note immediately instead of waiting for the next gate.
-        nzzl::QuantizeParams qp;
-        qp.scaleIndex  = (int)std::round(params[SCALE_PARAM].getValue());
-        qp.root        = (int)std::round(params[ROOT_PARAM].getValue());
-        qp.octaveRange = (int)std::round(params[OCTAVE_RANGE_PARAM].getValue());
-        nzzl::StepData held{};
-        held.pitchIndex = heldPitchIndex;
-        held.octaveRaw  = heldOctaveRaw;
-        outputs[CV_PITCH_OUTPUT].setVoltage(nzzl::pitchVoltage(held, qp));
+        outputs[CV_PITCH_OUTPUT].setVoltage(out.pitch);
+        outputs[GATE_OUTPUT].setVoltage(out.gate);
+        outputs[VELOCITY_OUTPUT].setVoltage(out.velocity);
     }
 };
 
