@@ -12,13 +12,22 @@ and **why**, so any session can pick up the work without re-deriving it.
 ```
 src/
 ├── rng.hh       Xorshift32 PRNG. Pure, no deps.
-├── pattern.hh   Seed → StepData[16]. Pure, no rack.hpp. THE core logic.
+├── pattern.hh   Seed → StepData[16], style zones, seed↔knob mapping. Pure.
 ├── scales.hh    Scale tables + degree/octave mapping + quantization. Pure.
-├── nzzl.cc      Thin Rack adapter: params/jacks ↔ pattern + realtime state.
+├── engine.hh    The realtime state machine: triggers, clock, gate, slide,
+│                sample-and-hold. Pure — fed fake time and fake voltages.
+├── cv.hh        CV input → parameter mapping. Pure.
+├── display.hh   Panel text building. Pure, no heap, no stdio.
+├── nzzl.cc      Thin Rack adapter: params/jacks ↔ the headers above.
 └── plugin.cc    Plugin registration.
 tests/
-├── test_pattern.cc  Pattern generation suite  — no Rack/MetaModule deps.
-├── test_scales.cc   Pitch quantizer suite     — no Rack/MetaModule deps.
+├── test_pattern.cc  Pattern generation
+├── test_scales.cc   Pitch quantizer
+├── test_engine.cc   Realtime sequencer, driven by synthetic time/voltages
+├── test_styles.cc   Style zones (aggregate, statistical)
+├── test_cv.cc       Seed↔knob round trip + CV mappings
+├── test_display.cc  Panel text
+├── refgen.cc        Reference-data generator (not a test; run by hand)
 └── run_tests.sh     Compiles and runs every test_*.cc (each has its own
                      main()). Use after every pure-logic change.
 ```
@@ -162,13 +171,19 @@ immediately instead of waiting for the next gate. This half lives in
 Three tiers. Claude runs tier 1 via `./tests/run_tests.sh` after every
 pure-logic change; the user runs tier 2 in VCV Rack; tier 3 needs hardware.
 
-**Current coverage honestly stated:** the harness covers pattern *generation*
-only. Realtime sequencer behavior in `nzzl.cc` (clock edges, run toggle,
-gate timers, output voltages) is NOT covered by the harness — it is
-user-tested in Rack. If realtime logic grows complex, extract it into a pure
-`engine.hh` (a step-machine struct fed fake time/voltage samples) to make it
-Claude-testable too. Consider this at Task 7 (slide) when timing logic gets
-harder to eyeball.
+**Current coverage honestly stated:** the `engine.hh` extraction happened at
+Task 7, as planned, so the harness now covers realtime behaviour too — clock
+edges and division, run-toggle semantics, gate duration, density gating,
+sample-and-hold and slide are all driven with synthetic time and voltages.
+
+**What the harness still cannot see**, and what therefore remains genuinely
+user-tested:
+- that params and jacks are wired to the right engine fields at all (the
+  adapter is thin, but a swapped jack would pass every suite)
+- anything visual: panel layout, labels, the display's pixels
+- how any of it actually sounds — style zones are checked statistically, not
+  musically
+- MetaModule hardware behaviour of any kind
 
 ### Per-task test plan (Claude = native harness, User = VCV Rack)
 
@@ -177,12 +192,12 @@ harder to eyeball.
 | 4 gate/density | ✅ weight permutation ⇒ density exactness (done) | gates fire irregularly; DENSITY sweep adds one step per click; same seed+density = same pattern; gate length scales with tempo |
 | 5 scales/pitch | ✅ all four done: semitone/voltage correctness over 10.8M cases, interval tables vs. independent reference, raw mode (scale position 0) 0–5 V and off-grid, octave never exceeds knob. Plus contour monotonicity, index clamping, and root-stays-quantized. | pitch output plays in-key through a VCO; root knob transposes; lock-off sounds unquantized |
 | 6 velocity | ✅ range test (done) | velocity varies per note, holds during silence |
-| 7 slide | if extracted to engine.hh: glide reaches target within slide time, no overshoot; slide=0 ⇒ instantaneous | glide audible on flagged steps, SLIDE knob CCW kills it |
-| 8 styles | statistical: bassline seeds (groups 1–10) bias pitch toward degrees 0/4 and beats 1/3; random seeds ~uniform; per-style gate-length distributions differ. Assert on aggregate counts across all seeds in each zone | zones sound distinct by ear |
-| 9 reseed | reseed maps any seed_index 0–1023 back to correct group/subgroup knob values (round-trip) | trigger changes pattern, knobs jump to match |
-| 10 CV inputs | CV→value mapping functions (voltage → scale index, root, seed offset) are pure — test the mapping tables/clamping | LFO into CV ROOT shifts key smoothly |
-| 11 display | zone-name lookup (group,subgroup → "BASS"/"ARP↑"/…) is pure — test all 1024 | display renders on hardware |
-| 12 patch save | if state serialization is factored into a pure helper: round-trip seed_index through it | save/reload patch in Rack restores seed |
+| 7 slide | ✅ done, in `engine.hh`: arrival exact, no overshoot, within one step, scales with knob and with tempo, slide=0 provably instantaneous | glide audible on flagged steps, SLIDE knob CCW kills it |
+| 8 styles | ✅ done, aggregate over whole zones: bass beat bias, root/fifth bias, arp run structure, per-zone gate distributions — plus the random zone proven bit-identical to the pre-style generator | zones sound distinct by ear |
+| 9 reseed | ✅ done: seed↔knob mapping proven bijective over all 1024 and clamping-safe; reseed edge semantics tested in `engine.hh` | trigger changes pattern, knobs jump to match |
+| 10 CV inputs | ✅ done: every mapping's table, rounding, clamping and wrapping; unpatched is a no-op; a 14 000-point CV ROOT sweep never leaves the semitone grid | LFO into CV ROOT shifts key in tune |
+| 11 display | ✅ text half done: all 1024 seeds render correct G##/S##, zone and root+scale, with clamping and truncation | display renders on hardware |
+| 12 patch save | ✅ the seed rides on the params (reseed writes the knobs), and that round trip is the tested seed↔knob bijection | save/reload patch in Rack restores seed and run state |
 
 Rule of thumb: **before implementing each task, factor the decision logic
 into a pure function in a header, write its test, then wire it into
@@ -199,15 +214,15 @@ into a pure function in a header, write its test, then wire it into
 | 3 | RNG + seed system | ✅ user-confirmed ("overall looks like it worked") |
 | — | Design review: pattern.hh extraction, hashed seeds, per-attr streams, weight permutation, velocity latch, native test harness | ✅ tests pass |
 | 4 | Gate output + density logic | 🔶 built, **awaiting user test** |
-| 5 | Pitch output: scales.hh, root, octave, scale lock | 🔶 built, **awaiting user test** |
+| 5 | Pitch output: scales.hh, root, octave, scale position 0 | 🔶 built, **awaiting user test** |
 | 6 | Velocity output | ✅ done early (folded into 3/4) |
-| 7 | Slide / portamento | ⬜ |
-| 8 | Style differentiation (bassline/random/arp weighting) | ⬜ |
-| 9 | Reseed trigger + knob sync | ⬜ |
-| 10 | CV inputs (scale/seed/root/slide) | ⬜ |
-| 11 | Display (MetaModule TextDisplay) | ⬜ hardware needed |
-| 12 | Patch state save (dataToJson/dataFromJson) | ⬜ |
-| — | Panel layout + labels (VCV widget & MetaModule panel) | ⬜ deliberately last |
+| 7 | Slide / portamento (+ `engine.hh` extraction) | 🔶 built, **awaiting user test** |
+| 8 | Style zones (bassline / random / arp) | 🔶 built, **awaiting user test** |
+| 9 | Reseed trigger + knob sync | 🔶 built, **awaiting user test** |
+| 10 | CV inputs (scale/seed/root/slide) | 🔶 built, **awaiting user test** |
+| 11 | Display (MetaModule TextDisplay) | 🔶 text built + tested; **rendering unverified on hardware** |
+| 12 | Patch state save (dataToJson/dataFromJson) | 🔶 built, **awaiting user test** |
+| — | Panel layout + labels (VCV widget & MetaModule panel) | 🔶 built, **awaiting user test** |
 
 **Task 4 test checklist (pending):** gates fire irregularly per seed; DENSITY
 sweep 1→16 adds steps one at a time; same seed+density = identical pattern;
@@ -221,16 +236,103 @@ microtonal; knob turns re-pitch the held note immediately. Full procedure in
 
 ---
 
-## Deferred decisions
+## Decisions that were deferred, and how they landed
 
-- **Panel layout/labels:** deliberately postponed until features are complete;
-  current VCV widget is a plain testing harness (2-column knobs, jack rows).
-- **Slide time constant** (spec says "derived from clock tempo feel") — exact
-  formula TBD at Task 7.
-- **Style rhythm weighting details** (bassline beats-1-and-3 clustering) —
-  needs a weight-shaping approach that preserves the 1–16 permutation
-  invariant, decide at Task 8. Likely: generate permutation, then bias which
-  *positions* get low weights, keeping the permutation property.
-- **CV SEED semantics** (offset vs absolute) — decide at Task 10.
-- **The panel position freed by SCALE LOCK** is unassigned. Don't spend it
-  without a reason; an empty slot is cheaper than a control nobody uses.
+All four open questions from the original deferral list are now settled.
+
+- **Slide time constant** — `slideKnob × 0.9 × step duration`, linear ramp.
+  Linear rather than exponential because it arrives *exactly* (so the note
+  ends up precisely in tune), it cannot overshoot, and "reaches the target
+  within the slide time" becomes a property the harness can assert. The 0.9
+  cap means a glide always finishes before the next note starts.
+- **Style rhythm weighting** — solved by *swapping* weights between positions
+  rather than regenerating them. A swap preserves the 1–16 permutation, so
+  DENSITY stays exactly linear (invariant 3) while the lowest weights get
+  pulled onto strong beats.
+- **CV SEED semantics** — **offset**, not absolute, and it wraps. Absolute CV
+  would make the panel lie: GROUP/SUBGROUP could read 3/3 while something
+  else plays, and it would fight the Task 9 knob sync, whose whole point is
+  that what you hear is always reproducible from what you see. Wrapping (not
+  clamping) lets an LFO sweep continuously instead of parking at an end.
+- **Panel layout** — built. Three columns: controls, jacks, outputs, with the
+  display across the top. The position freed by SCALE LOCK is left empty
+  deliberately; an empty slot is cheaper than a control nobody uses.
+
+### Still open
+
+- **Whether folding SCALE LOCK into the SCALE knob was right.** Costs the
+  ability to A/B back to your scale. Test T5.11b in the system test guide.
+- **Whether Blues should have stayed** in the scale list instead of Melodic
+  Minor. Free to change until patches exist.
+- **Hardware display rendering.** The text is fully tested; whether
+  `MetaModule::VCVTextDisplay` actually paints it is unverified and needs the
+  physical module.
+
+---
+
+## Style zones (Task 8)
+
+GROUP splits the 1024 seeds into three zones: **1–10 BASS**, **11–22 RAND**,
+**23–32 ARP**.
+
+The style layer runs *after* the base pattern, from its own `SALT_STYLE`
+stream, and **STYLE_RANDOM is a deliberate no-op**. That is what invariant 2
+requires — new needs get new salts, existing draws never change — and it means
+the middle zone stays bit-identical to the pre-Task-8 module.
+`test_random_zone_unchanged` proves this for all 384 random-zone seeds, and it
+is the single most important test in that suite: it is the guarantee that
+adding character to the module didn't silently retune everything else.
+
+| | BASS | RAND | ARP |
+|---|---|---|---|
+| Rhythm | lowest weights pulled onto strong beats | untouched | untouched |
+| Pitch | anchored on root and fifth | untouched | sorted into 4-step runs |
+| Gate | shorter, punchier (0.10–0.58) | as generated (0.10–0.90) | even, mid (0.25–0.49) |
+| Measured | 78% of DENSITY-4 notes on the beat (chance 25%), 69% on root/fifth (chance 31%) | at chance | 100% of 4-step blocks are runs (random zone 12%) |
+
+---
+
+## CV input conventions (Task 10)
+
+**Every CV input is an offset on its knob, never an absolute value** — see the
+CV SEED note above for why.
+
+| Input | Scaling | Out of range |
+|---|---|---|
+| cvSCALE | 1 V per scale position | clamps (nothing musical past either end) |
+| cvROOT | V/oct — 1 V = 12 semitones | wraps (past B is just C again) |
+| cvSEED | 10 V spans all 1024 seeds | wraps (so an LFO sweeps continuously) |
+| cvSLIDE | 10 V spans the knob's 0–1 travel | clamps |
+
+**cvROOT snapping to whole semitones is load-bearing, not cosmetic.** A smooth
+CV passed straight into the pitch formula would de-quantize the output and
+break the ROOT invariant. `test_cv_root_never_dequantizes` sweeps ~14 000
+voltages and checks every resulting note is still on the semitone grid and
+still in key.
+
+---
+
+## Patch state (Task 12)
+
+The seed rides on the GROUP/SUBGROUP params, which Rack saves itself —
+**including after a RESEED**, because `reseed()` writes the knobs rather than
+shadowing them. So `dataToJson` only needs to carry state that is *not* a
+param: whether RUN has stopped playback.
+
+The step position is deliberately **not** saved. A reloaded patch should start
+somewhere predictable rather than halfway through a phrase.
+
+---
+
+## Display (Task 11)
+
+`display.hh` builds the three lines — `G## S##`, the zone name, and
+`<root> <scale>` — with no heap, no `<string>` and no stdio, so all 1024 seeds
+are harness-checkable and nothing can allocate on the audio thread. Only the
+pixels are hardware's problem.
+
+The widget derives from `MetaModule::VCVTextDisplay` when `NZZL_METAMODULE` is
+defined and from `LightWidget` otherwise, and draws through `draw()` rather
+than `drawLayer()` because `drawLayer` is a Rack-only lights-layer concept.
+The TTF load is Rack-only and guarded, so a failed font load cannot skip
+`nvgText` on hardware.

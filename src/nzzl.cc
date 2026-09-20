@@ -206,9 +206,10 @@ struct NZZLDisplay : NZZLDisplayBase {
     int   line   = 0;          // 0 = seed, 1 = zone, 2 = scale/root
     float fontSize = 13.f;
 
-    void drawLayer(const DrawArgs& args, int layer) override {
-        if (layer != 1)
-            return;
+    // Deliberately draw() rather than drawLayer(): drawLayer is a Rack-only
+    // "lights layer" concept, and the MetaModule firmware reads the text from
+    // an ordinary draw pass.
+    void draw(const DrawArgs& args) override {
         nzzl::DisplayText d;
         if (module)
             nzzl::buildDisplay(module->seedIndex < 0 ? 0 : module->seedIndex,
@@ -254,15 +255,20 @@ struct NZZLLabel : widget::Widget {
         nvgFontSize(args.vg, size);
         nvgFillColor(args.vg, color);
         nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
-        nvgText(args.vg, 0.f, 0.f, text.c_str(), NULL);
+        // Draw at the centre of a real box — a zero-size widget can be
+        // scissored away before anything reaches the screen.
+        nvgText(args.vg, box.size.x * 0.5f, 0.f, text.c_str(), NULL);
     }
 };
+
+constexpr float LABEL_W = 80.f;
+constexpr float LABEL_H = 14.f;
 
 struct NZZLWidget : app::ModuleWidget {
     void addLabel(math::Vec pos, const std::string& text, float size = 9.f) {
         NZZLLabel* l = new NZZLLabel;
-        l->box.pos = pos;
-        l->box.size = math::Vec(0, 0);
+        l->box.size = math::Vec(LABEL_W, LABEL_H);
+        l->box.pos  = math::Vec(pos.x - LABEL_W * 0.5f, pos.y);
         l->text = text;
         l->size = size;
         addChild(l);

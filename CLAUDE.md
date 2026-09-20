@@ -20,14 +20,16 @@ patches.
 ## Build & test loop
 
 ```bash
-# 1. Native tests — run after ANY change to src/*.hh (pure logic)
+# 1. Native tests — run after ANY change to src/*.hh (pure logic).
+# Six suites; CI runs them too, so a red harness never reaches main.
 ./tests/run_tests.sh
 
 # 2. VCV Rack build + install (user tests by ear/scope in Rack)
 cmake --build build-vcv && cmake --install build-vcv
 # then the user restarts VCV Rack 2
 
-# 3. MetaModule hardware build — push to main, CI builds NZZL.mmplugin
+# 3. MetaModule hardware build — CI builds NZZL.mmplugin on EVERY branch,
+# so push and check it before merging, not after.
 git push   # artifact downloadable via: gh run download
 ```
 
@@ -37,8 +39,10 @@ git push   # artifact downloadable via: gh run download
   no `random::` calls in `process()`. The only non-deterministic moment is
   the RESEED trigger.
 - **Pure logic goes in headers under `src/` with no `rack.hpp` include**
-  (`rng.hh`, `pattern.hh`, `scales.hh`) so the native test harness
-  can compile it. `nzzl.cc` is a thin Rack adapter only.
+  (`rng.hh`, `pattern.hh`, `scales.hh`, `engine.hh`, `cv.hh`, `display.hh`)
+  so the native test harness can compile it. `nzzl.cc` is a thin Rack adapter
+  only — if you are about to put a decision in it, put it in a header instead
+  and write the test.
 - **Never change how an existing attribute consumes its RNG stream** — each
   attribute has its own salted stream precisely so patches survive upgrades.
   New attributes get new salts.
@@ -62,9 +66,10 @@ MUST end with two clearly labeled sections:
 
 Rules:
 - Never mark something automated unless a test in `tests/` actually covers
-  it and passed in this session. Realtime logic in `nzzl.cc` (triggers,
-  timers, voltages) is manual unless it has been extracted into a pure
-  header with tests.
+  it and passed in this session. Realtime logic now lives in `engine.hh` and
+  IS harness-covered; what genuinely remains manual is whether jacks and
+  knobs are wired to the right engine fields, anything visual, how it
+  sounds, and all hardware behaviour.
 - If nothing needs manual testing, say so explicitly rather than omitting
   the section.
 - The per-task Claude/user test split is pre-planned in
