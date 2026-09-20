@@ -1,8 +1,11 @@
 name: Build NZZL plugin
 
+# Builds every branch, not just main: the ARM cross-compile is the only way to
+# verify a change actually works on hardware, and that needs to happen BEFORE
+# a branch is merged, not after.
 on:
   push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -11,7 +14,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -24,7 +27,7 @@ jobs:
           release: '12.3.Rel1'
 
       - name: Install CMake 3.26
-        uses: jwlawson/actions-setup-cmake@v1.13
+        uses: jwlawson/actions-setup-cmake@v2
         with:
           cmake-version: '3.26.x'
 
@@ -32,6 +35,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build
+
+      - name: Native test harness
+        run: ./tests/run_tests.sh
 
       - name: Build
         run: |
@@ -41,7 +47,7 @@ jobs:
           cmake --build build
 
       - name: Upload plugin artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: NZZL-plugin
           path: metamodule-plugins/*.mmplugin

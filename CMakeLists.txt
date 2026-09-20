@@ -18,6 +18,7 @@ if(DEFINED RACK_DIR)
     add_library(NZZL MODULE)
     target_sources(NZZL PRIVATE src/plugin.cc src/nzzl.cc)
     target_include_directories(NZZL PRIVATE src ${RACK_DIR}/include ${RACK_DIR}/dep/include)
+    target_compile_definitions(NZZL PRIVATE NZZL_VCV_RACK=1)
 
     if(APPLE)
         target_link_options(NZZL PRIVATE
@@ -52,6 +53,8 @@ else()
 
     add_library(NZZL STATIC)
     target_include_directories(NZZL PRIVATE src)
+    # Selects the MetaModule::VCVTextDisplay base for the panel display.
+    target_compile_definitions(NZZL PRIVATE NZZL_METAMODULE=1)
     target_sources(NZZL PRIVATE src/plugin.cc src/nzzl.cc)
 
     if("${INSTALL_DIR}" STREQUAL "")
