@@ -14,7 +14,6 @@ struct NZZL : engine::Module {
         OCTAVE_RANGE_PARAM,
         ROOT_PARAM,
         SCALE_PARAM,
-        SCALE_LOCK_PARAM,
         SLIDE_PARAM,
         PARAMS_LEN
     };
@@ -71,12 +70,12 @@ struct NZZL : engine::Module {
         configParam(OCTAVE_RANGE_PARAM,1.f, 5.f, 2.f,  "Octave Range", " oct");
         configSwitch(ROOT_PARAM,  0.f, 11.f, 0.f, "Root Note",
             {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"});
-        configSwitch(SCALE_PARAM, 0.f, float(nzzl::NUM_SCALES - 1), 2.f, "Scale",
-            {"Chromatic", "Major", "Natural Minor", "Dorian", "Phrygian",
-             "Phrygian Dominant", "Lydian", "Mixolydian", "Harmonic Minor",
-             "Melodic Minor", "Minor Pentatonic", "Blues"});
-        configSwitch(SCALE_LOCK_PARAM, 0.f, 1.f, 1.f, "Scale Lock",
-            {"Off (unquantized)", "On"});
+        // Position 0 is unquantized — this knob replaces the old SCALE LOCK
+        // switch, so one control answers "how are these notes pitched?".
+        configSwitch(SCALE_PARAM, 0.f, float(nzzl::NUM_SCALES - 1), 3.f, "Scale",
+            {"Unquantized", "Chromatic", "Major", "Natural Minor", "Dorian",
+             "Phrygian", "Phrygian Dominant", "Lydian", "Mixolydian",
+             "Harmonic Minor", "Melodic Minor", "Minor Pentatonic"});
         configParam(SLIDE_PARAM,      0.f, 1.f,  0.f,  "Slide");
 
         configInput(CLOCK_INPUT,    "Clock");
@@ -153,10 +152,10 @@ struct NZZL : engine::Module {
         qp.scaleIndex  = (int)std::round(params[SCALE_PARAM].getValue());
         qp.root        = (int)std::round(params[ROOT_PARAM].getValue());
         qp.octaveRange = (int)std::round(params[OCTAVE_RANGE_PARAM].getValue());
-        qp.scaleLock   = params[SCALE_LOCK_PARAM].getValue() > 0.5f;
-        outputs[CV_PITCH_OUTPUT].setVoltage(
-            qp.scaleLock ? nzzl::quantizedVoltage(heldPitchIndex, heldOctaveRaw, qp)
-                         : nzzl::rawVoltage(heldPitchIndex, heldOctaveRaw, qp));
+        nzzl::StepData held{};
+        held.pitchIndex = heldPitchIndex;
+        held.octaveRaw  = heldOctaveRaw;
+        outputs[CV_PITCH_OUTPUT].setVoltage(nzzl::pitchVoltage(held, qp));
     }
 };
 
@@ -194,10 +193,9 @@ struct NZZLWidget : app::ModuleWidget {
             math::Vec(x + 40, y), module, NZZL::SCALE_PARAM));
 
         y += dy;
-        addParam(createParamCentered<componentlibrary::CKSS>(
-            math::Vec(x, y), module, NZZL::SCALE_LOCK_PARAM));
         addParam(createParamCentered<componentlibrary::RoundBlackKnob>(
-            math::Vec(x + 40, y), module, NZZL::SLIDE_PARAM));
+            math::Vec(x, y), module, NZZL::SLIDE_PARAM));
+        // x + 40 on this row is free — SCALE LOCK folded into the SCALE knob.
 
         // ── Inputs ───────────────────────────────────────────────────────────
         float ix = 120.f;

@@ -64,14 +64,17 @@ Audio-8.
 
 **NZZL knobs**
 `GROUP 1 · SUBGROUP 1 · DENSITY 8 · LENGTH 16 · CLK DIV 1 · OCT RANGE 2 ·
-ROOT C · SCALE Natural Minor · SCALE LOCK On · SLIDE 0`
+ROOT C · SCALE Natural Minor · SLIDE 0`
+
+> **There is no SCALE LOCK switch.** Unquantized is **position 0 of the SCALE
+> knob**. One control, no interaction to reason about.
 
 ### 0.3 Useful Rack habits for this guide
 
 - **Right-click a knob → type an exact value.** Essential wherever the guide
   says "set DENSITY to 4".
-- **Hover a knob** to read its tooltip. ROOT, SCALE and SCALE LOCK now report
-  real names (`Natural Minor`, `G#`, `Off (unquantized)`), not raw numbers.
+- **Hover a knob** to read its tooltip. ROOT and SCALE report real names
+  (`Natural Minor`, `G#`, `Unquantized`), not raw numbers.
 - **Scope** is your voltmeter — it prints the measured voltage per channel.
 - Ctrl/Cmd-click a cable to delete it; drag from an output to duplicate.
 
@@ -92,7 +95,7 @@ meaningful.
 | ID | Do | Expect |
 |---|---|---|
 | S.1 | Add NZZL to a rack | Module appears, no Rack crash, no red "failed to load" panel |
-| S.2 | Look at the panel | 10 knobs/switches, 7 input jacks, 3 output jacks, nothing overlapping off the edge |
+| S.2 | Look at the panel | 9 knobs, 7 input jacks, 3 output jacks, nothing overlapping off the edge. The bottom-right knob position is intentionally empty |
 | S.3 | Start the LFO clock | Gate LED activity on the Scope; you hear notes |
 | S.4 | Let it run 60 s | No dropouts, no clicks on every note, no runaway CPU (right-click module → CPU meter stays low) |
 | S.5 | Remove and re-add the module | No crash |
@@ -187,44 +190,59 @@ machine-verified over 11.8 million cases; what you're testing is that the
 | T5.2 | Watch CV PITCH on the Scope | Voltage is a **staircase** — flat during each note, stepping at gate onsets. No glide, no noise (slide is Task 7) |
 | T5.3 | Watch through a silent step | Pitch **holds** — it doesn't jump on steps where no gate fires |
 
-### 6.2 Scale lock and scale selection
+### 6.2 The SCALE knob
+
+Twelve positions. **Position 0 is Unquantized** — it replaced the old SCALE
+LOCK switch, so this one knob covers raw mode *and* every scale.
+
+| # | Position | # | Position |
+|---|----------|---|----------|
+| **0** | **Unquantized** | 6 | Phrygian Dominant |
+| 1 | Chromatic | 7 | Lydian |
+| 2 | Major | 8 | Mixolydian |
+| 3 | Natural Minor *(default)* | 9 | Harmonic Minor |
+| 4 | Dorian | 10 | Melodic Minor |
+| 5 | Phrygian | 11 | Minor Pentatonic |
 
 | ID | Do | Expect |
 |---|---|---|
-| T5.4 | SCALE LOCK **On**, SCALE = Natural Minor, ROOT = C | Every note is in C minor. Play a C minor chord on a keyboard against it — nothing clashes |
-| T5.5 | SCALE LOCK **Off** | Notes go audibly **microtonal** — clearly between the keys, sour on purpose. Not silence, not chaos |
-| T5.6 | Toggle Lock On/Off repeatedly | Snaps cleanly between in-tune and detuned. Same rhythm either way |
-| T5.7 | Lock On. Step SCALE through all 12 | Each is in tune. Tooltip names them: Chromatic, Major, Natural Minor, Dorian, Phrygian, Phrygian Dominant, Lydian, Mixolydian, Harmonic Minor, Melodic Minor, Minor Pentatonic, Blues |
-| T5.8 | Listen for character as you sweep SCALE | Major bright, Minor dark, Phrygian Dominant "Spanish", Blues bluesy, Chromatic anything-goes. They should be **distinguishable by ear** |
+| T5.4 | SCALE = Natural Minor, ROOT = C | Every note is in C minor. Play a C minor chord against it — nothing clashes |
+| T5.5 | SCALE = **position 0 (Unquantized)** | Notes go audibly **microtonal** — clearly between the keys, sour on purpose. Not silence, not chaos |
+| T5.6 | Sweep position 0 → 1 → 0 repeatedly | Snaps cleanly between detuned and in-tune. Same rhythm either way |
+| T5.7 | Step SCALE through all 12 positions | Positions 1–11 are all in tune. Tooltips read exactly as the table above |
+| T5.8 | Listen for character as you sweep | Major bright, Minor dark, Phrygian Dominant "Spanish", Chromatic anything-goes. They should be **distinguishable by ear** |
 | T5.9 | **Contour check.** Note the melodic *shape* at Natural Minor — where it rises, where it falls. Now switch to Minor Pentatonic, then Major | The **shape survives** — the same steps are still the high points and low points. Only the colour changes. *(This is why the mapping is proportional rather than modulo; if the melody scrambles on a scale change, that's a real bug.)* |
 | T5.10 | SCALE = Minor Pentatonic | Fewer distinct pitches, more repeated notes than a 7-note scale. Expected — it only has 5 degrees |
-| T5.11 | SCALE = Chromatic | All 12 semitones available; sounds least "composed" of the locked modes |
+| T5.11 | SCALE = Chromatic | All 12 semitones available; sounds least "composed" of the quantized positions |
+| T5.11b | **Judgement call, not pass/fail.** Live with the folded-in knob for a few minutes | Does losing the ability to A/B straight back to your scale bother you in practice? If it does, the switch can come back — say so |
 
 ### 6.3 Root
 
 | ID | Do | Expect |
 |---|---|---|
-| T5.12 | Lock On, Natural Minor. Step ROOT C → C# → D … → B | Each click transposes the **whole pattern up one semitone**. The melody is otherwise identical |
+| T5.12 | Natural Minor. Step ROOT C → C# → D … → B | Each click transposes the **whole pattern up one semitone**. The melody is otherwise identical |
 | T5.13 | ROOT C then ROOT B, checking CV PITCH on the Scope | The B reading is exactly **11/12 V ≈ 0.917 V higher** than the C reading on the same step |
 | T5.14 | Change ROOT **while a note is sustaining** | The held note transposes **immediately** — you don't wait for the next gate |
-| T5.15 | Lock **Off**, sweep ROOT | Still transposes (root is a transpose in both modes) |
+| T5.15 | **Stays quantized.** Step ROOT through all 12 with a scale selected, playing a chord in the new key against it each time | **Every root is still perfectly in tune and in key** — nothing drifts sharp or flat, nothing falls between the keys. Root is a whole-semitone transpose and nothing else |
+| T5.16 | Sweep ROOT rapidly while running | No intermediate out-of-tune notes; it jumps key to key |
+| T5.17 | SCALE = position 0 (Unquantized), sweep ROOT | Still transposes by exact semitones — the microtonal pattern moves as a block rather than smearing |
 
 ### 6.4 Octave range
 
 | ID | Do | Expect |
 |---|---|---|
-| T5.16 | OCT RANGE = 1 | Pattern is confined to a **single octave** — narrow, almost monotone in span |
-| T5.17 | OCT RANGE = 2 | Notes spread over two octaves |
-| T5.18 | OCT RANGE = 5 | Wide, leaping pattern across five octaves |
-| T5.19 | At OCT RANGE 5, watch the Scope over a full loop | Total pitch span is **under 5 V** above the lowest note (plus the ROOT offset). It must not exceed the knob setting |
-| T5.20 | Sweep OCT RANGE 1 → 5 → 1 | Returns to the same narrow pattern. No stuck high notes |
-| T5.21 | Change OCT RANGE while a note sustains | Held note jumps immediately, same as ROOT |
+| T5.18 | OCT RANGE = 1 | Pattern is confined to a **single octave** — narrow, almost monotone in span |
+| T5.19 | OCT RANGE = 2 | Notes spread over two octaves |
+| T5.20 | OCT RANGE = 5 | Wide, leaping pattern across five octaves |
+| T5.21 | At OCT RANGE 5, watch the Scope over a full loop | Total pitch span is **under 5 V** above the lowest note (plus the ROOT offset). It must not exceed the knob setting |
+| T5.22 | Sweep OCT RANGE 1 → 5 → 1 | Returns to the same narrow pattern. No stuck high notes |
+| T5.23 | Change OCT RANGE while a note sustains | Held note jumps immediately, same as ROOT |
 
 ### 6.5 Known-good reference data
 
-Set **GROUP 1 · SUBGROUP 1 · SCALE Natural Minor · ROOT C · OCT RANGE 2 ·
-SCALE LOCK On**, then use CLK DIV or a slow clock to walk the pattern one
-step at a time. Read CV PITCH on the Scope.
+Set **GROUP 1 · SUBGROUP 1 · SCALE Natural Minor (position 3) · ROOT C ·
+OCT RANGE 2**, then use CLK DIV or a slow clock to walk the pattern one step at
+a time. Read CV PITCH on the Scope.
 
 These are the exact values the code produces for seed index 0. `●` = the step
 plays at that DENSITY. Note names assume 0 V = C4, VCO at default tune.
@@ -250,10 +268,10 @@ plays at that DENSITY. Note names assume 0 V = C4, VCO at default tune.
 
 | ID | Do | Expect |
 |---|---|---|
-| T5.22 | DENSITY 4 | The four `●` steps under **On @ D4** (2, 8, 11, 14) are the ones that play |
-| T5.23 | DENSITY 8 | The eight `●` steps under **On @ D8** play |
-| T5.24 | Read CV PITCH on the playing steps | Matches the **Pitch (V)** column within ±0.01 V |
-| T5.25 | Read VELOCITY on the playing steps | Matches the **Vel (V)** column within ±0.1 V |
+| T5.24 | DENSITY 4 | The four `●` steps under **On @ D4** (2, 8, 11, 14) are the ones that play |
+| T5.25 | DENSITY 8 | The eight `●` steps under **On @ D8** play |
+| T5.26 | Read CV PITCH on the playing steps | Matches the **Pitch (V)** column within ±0.01 V |
+| T5.27 | Read VELOCITY on the playing steps | Matches the **Vel (V)** column within ±0.1 V |
 
 Regenerate this table any time the generator changes — the tool prints it as
 markdown, ready to paste back in, plus two more seeds:
@@ -305,8 +323,12 @@ until the matching task ships.
 - No reseeding happens without a trigger
 
 ### Task 10 — CV inputs
-- CV SCALE: an LFO sweeps through scales smoothly, no glitching
-- CV ROOT: an LFO transposes the key continuously
+- CV SCALE: an LFO sweeps through scale positions, landing on **discrete**
+  positions — including position 0, so a CV can drop the pattern into raw mode
+  and back with no second input
+- CV ROOT: an LFO transposes the key, **snapping to whole semitones**. A smooth
+  CV passed straight through would de-quantize the output — see DESIGN.md
+  § Pitch mapping. Notes must stay in tune at every point of the sweep
 - CV SEED: changes pattern; semantics (offset vs absolute) still to be decided
 - CV SLIDE: modulates glide amount
 - Every CV input is ignored when unpatched, and clamps safely at ±10 V
@@ -361,7 +383,7 @@ Part 2  Clock/Run/Len    T2.1–T2.11     [ ] pass  [ ] fail: ______________
 Part 3  Seed system      T3.1–T3.5      [ ] pass  [ ] fail: ______________
 Part 4  Gate/Density     T4.1–T4.10     [ ] pass  [ ] fail: ______________
 Part 5  Velocity         T6.1–T6.5      [ ] pass  [ ] fail: ______________
-Part 6  Pitch/Scales     T5.1–T5.25     [ ] pass  [ ] fail: ______________
+Part 6  Pitch/Scales     T5.1–T5.27     [ ] pass  [ ] fail: ______________
 Part 7  Cross/Stress     X.1–X.8        [ ] pass  [ ] fail: ______________
 Part 9  Hardware         H.1–H.7        [ ] n/a   [ ] pass  [ ] fail: _____
 
@@ -369,6 +391,7 @@ Musical judgement (not pass/fail — opinions wanted):
   Do the seed zones sound useful? ________________________________
   Is DENSITY's response musical?  ________________________________
   Is the scale list the right 12? ________________________________
+  Does raw-as-position-0 beat a separate switch? _________________
   Anything that feels wrong to play? _____________________________
 ```
 
