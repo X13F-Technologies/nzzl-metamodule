@@ -21,7 +21,7 @@ static int failures = 0;
 
 using namespace nzzl;
 
-static const int NUM_SEEDS = 1024;
+// NUM_SEEDS (1024) comes from pattern.hh.
 
 static bool isStrongBeat(int step) {
     return step == 0 || step == 4 || step == 8 || step == 12;

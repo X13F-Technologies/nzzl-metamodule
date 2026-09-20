@@ -15,13 +15,6 @@
 
 namespace nzzl {
 
-inline float clampf(float v, float lo, float hi) {
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-inline int clampi(int v, int lo, int hi) {
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-
 // Schmitt trigger with the module's long-standing 0.1 V / 2.0 V thresholds.
 // Pure, so trigger behaviour is testable from raw voltages.
 struct Trigger {

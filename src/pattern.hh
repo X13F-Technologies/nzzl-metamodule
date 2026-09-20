@@ -9,6 +9,13 @@ namespace nzzl {
 
 constexpr int MAX_STEPS = 16;
 
+inline float clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+inline int clampi(int v, int lo, int hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
 struct StepData {
     int   weight;       // permutation of 1–16: density N activates exactly N steps
     int   pitchIndex;   // raw index 0–15, mapped into scale at playback
@@ -110,9 +117,27 @@ enum Style {
 };
 
 constexpr int SEEDS_PER_GROUP = 32;
+constexpr int NUM_GROUPS       = 32;
+constexpr int NUM_SEEDS        = SEEDS_PER_GROUP * NUM_GROUPS;   // 1024
 
 inline int groupForSeed(int seedIndex) {
     return seedIndex / SEEDS_PER_GROUP + 1;     // 1..32
+}
+
+// Knobs <-> seed index. RESEED (Task 9) needs the reverse direction so it can
+// drive the knobs to match the pattern it just picked — if the knobs stopped
+// agreeing with what is playing, the seed would no longer be reproducible by
+// hand, which is the whole promise of the module.
+inline int seedIndexFor(int group, int subgroup) {
+    group    = clampi(group,    1, NUM_GROUPS);
+    subgroup = clampi(subgroup, 1, SEEDS_PER_GROUP);
+    return (group - 1) * SEEDS_PER_GROUP + (subgroup - 1);
+}
+
+inline void seedKnobsFor(int seedIndex, int& group, int& subgroup) {
+    seedIndex = clampi(seedIndex, 0, NUM_SEEDS - 1);
+    group     = seedIndex / SEEDS_PER_GROUP + 1;
+    subgroup  = seedIndex % SEEDS_PER_GROUP + 1;
 }
 
 inline Style styleForSeed(int seedIndex) {
