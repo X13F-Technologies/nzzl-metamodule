@@ -33,7 +33,7 @@ git push   # artifact downloadable via: gh run download
   no `random::` calls in `process()`. The only non-deterministic moment is
   the RESEED trigger.
 - **Pure logic goes in headers under `src/` with no `rack.hpp` include**
-  (`rng.hh`, `pattern.hh`, future `scales.hh`) so the native test harness
+  (`rng.hh`, `pattern.hh`, `scales.hh`) so the native test harness
   can compile it. `nzzl.cc` is a thin Rack adapter only.
 - **Never change how an existing attribute consumes its RNG stream** — each
   attribute has its own salted stream precisely so patches survive upgrades.

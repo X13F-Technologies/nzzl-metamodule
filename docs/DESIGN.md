@@ -13,12 +13,14 @@ and **why**, so any session can pick up the work without re-deriving it.
 src/
 ├── rng.hh       Xorshift32 PRNG. Pure, no deps.
 ├── pattern.hh   Seed → StepData[16]. Pure, no rack.hpp. THE core logic.
-├── scales.hh    (Task 5) Scale tables + quantization. Pure.
+├── scales.hh    Scale tables + degree/octave mapping + quantization. Pure.
 ├── nzzl.cc      Thin Rack adapter: params/jacks ↔ pattern + realtime state.
 └── plugin.cc    Plugin registration.
 tests/
-├── test_pattern.cc  Native harness — compiles WITHOUT Rack/MetaModule.
-└── run_tests.sh     c++ -std=c++20 → run. Use after every pure-logic change.
+├── test_pattern.cc  Pattern generation suite  — no Rack/MetaModule deps.
+├── test_scales.cc   Pitch quantizer suite     — no Rack/MetaModule deps.
+└── run_tests.sh     Compiles and runs every test_*.cc (each has its own
+                     main()). Use after every pure-logic change.
 ```
 
 **Rule: anything deterministic lives in a pure header and gets tests.**
@@ -62,6 +64,57 @@ MetaModule (CI ARM cross-compile) via the SDK's rack-interface shim.
 
 ---
 
+## Pitch mapping (Task 5)
+
+**Scale order is an on-disk contract.** `SCALE_PARAM` stores an index, so
+inserting a scale mid-list would retune every saved patch. **Append only,
+never reorder.** The frozen order is:
+
+| # | Scale | # | Scale |
+|---|-------|---|-------|
+| 0 | Chromatic | 6 | Lydian |
+| 1 | Major | 7 | Mixolydian |
+| 2 | Natural Minor *(default)* | 8 | Harmonic Minor |
+| 3 | Dorian | 9 | Melodic Minor |
+| 4 | Phrygian | 10 | Minor Pentatonic |
+| 5 | Phrygian Dominant | 11 | Blues |
+
+*Why this set:* twelve slots were fixed by the knob range. Locrian and major
+pentatonic were dropped in favour of Phrygian Dominant and Blues, which earn
+their place in a bassline module. Verified against an independently written
+reference table in `test_scale_tables`.
+
+**Degree mapping is proportional, not modulo.**
+`degree = pitchIndex * noteCount / 16`. *Why:* a modulo mapping wraps —
+pitchIndex 14 and 15 would fold back to degrees 0 and 1 in a 7-note scale, so
+sweeping SCALE across different note counts would scramble the melody. The
+proportional map is monotonic, so the step that was the pattern's highest note
+stays its highest note in every scale. Verified by `test_degree_mapping` and
+`test_contour_monotonic`.
+
+**Voltage formula (scale lock ON):**
+`V = octave + (root + interval) / 12`, where `octave = int(octaveRaw × octaveRange)`
+clamped to `[0, octaveRange-1]`. The octave spread is therefore exactly the
+OCTAVE RANGE knob; ROOT adds a further 0–11/12 V on top, which is intended —
+it transposes the whole pattern. Verified by `test_quantized_notes_in_scale`
+(11.8M notes: every one lands on an exact semitone that belongs to the scale,
+within the octave range) and `test_root_transposes`.
+
+**Scale lock OFF** divides each octave into 16 equal steps (75 cents) rather
+than emitting a continuous voltage. *Why:* the module only has 16 discrete
+pitch indices, so "raw" has to mean *off the semitone grid*, not *smooth*.
+74% of generated notes land audibly off-grid; range is 0–5 V at OCTAVE RANGE 5.
+Verified by `test_raw_mode`.
+
+**Pitch is latched at gate onset, quantized every sample.** The step's
+`pitchIndex` / `octaveRaw` are sample-and-held exactly like velocity (silent
+steps don't retrigger a new note), but the quantizer re-runs continuously, so
+turning ROOT / SCALE / OCTAVE RANGE transposes the currently-held note
+immediately instead of waiting for the next gate. This half lives in
+`nzzl.cc` and is **user-tested, not harness-tested.**
+
+---
+
 ## Realtime behavior decisions
 
 - **RUN is a toggle trigger** (user-requested change from the spec's gate
@@ -94,7 +147,7 @@ harder to eyeball.
 | Task | Claude tests (add to test_pattern.cc) | User tests in Rack |
 |------|----------------------------------------|--------------------|
 | 4 gate/density | ✅ weight permutation ⇒ density exactness (done) | gates fire irregularly; DENSITY sweep adds one step per click; same seed+density = same pattern; gate length scales with tempo |
-| 5 scales/pitch | quantizer maps every (scale, root, degree, octave) to correct semitone/voltage; all 12 scales' interval tables match music theory; scale-lock-off maps raw 0–5 V; octave range never exceeds knob setting | pitch output plays in-key through a VCO; root knob transposes; lock-off sounds unquantized |
+| 5 scales/pitch | ✅ all four done: semitone/voltage correctness over 11.8M cases, interval tables vs. independent reference, raw mode 0–5 V and off-grid, octave never exceeds knob. Plus contour monotonicity and index clamping. | pitch output plays in-key through a VCO; root knob transposes; lock-off sounds unquantized |
 | 6 velocity | ✅ range test (done) | velocity varies per note, holds during silence |
 | 7 slide | if extracted to engine.hh: glide reaches target within slide time, no overshoot; slide=0 ⇒ instantaneous | glide audible on flagged steps, SLIDE knob CCW kills it |
 | 8 styles | statistical: bassline seeds (groups 1–10) bias pitch toward degrees 0/4 and beats 1/3; random seeds ~uniform; per-style gate-length distributions differ. Assert on aggregate counts across all seeds in each zone | zones sound distinct by ear |
@@ -118,7 +171,7 @@ into a pure function in a header, write its test, then wire it into
 | 3 | RNG + seed system | ✅ user-confirmed ("overall looks like it worked") |
 | — | Design review: pattern.hh extraction, hashed seeds, per-attr streams, weight permutation, velocity latch, native test harness | ✅ tests pass |
 | 4 | Gate output + density logic | 🔶 built, **awaiting user test** |
-| 5 | Pitch output: scales.hh, root, octave, scale lock | ⬜ next |
+| 5 | Pitch output: scales.hh, root, octave, scale lock | 🔶 built, **awaiting user test** |
 | 6 | Velocity output | ✅ done early (folded into 3/4) |
 | 7 | Slide / portamento | ⬜ |
 | 8 | Style differentiation (bassline/random/arp weighting) | ⬜ |
@@ -131,6 +184,12 @@ into a pure function in a header, write its test, then wire it into
 **Task 4 test checklist (pending):** gates fire irregularly per seed; DENSITY
 sweep 1→16 adds steps one at a time; same seed+density = identical pattern;
 gate duration scales with clock tempo.
+
+**Task 5 test checklist (pending):** pitch plays in key through a VCO; ROOT
+transposes; SCALE sweep changes colour without scrambling the melodic shape;
+OCTAVE RANGE widens the spread; SCALE LOCK off sounds microtonal; knob turns
+transpose the held note immediately. Full procedure in
+[SYSTEM_TEST_GUIDE.md](SYSTEM_TEST_GUIDE.md).
 
 ---
 
