@@ -1,6 +1,7 @@
 #pragma once
 #include "pattern.hh"
 #include "scales.hh"
+#include "cv.hh"
 
 // The realtime sequencer state machine, extracted from the Rack adapter so the
 // native harness can drive it with fake time and fake voltages.
@@ -38,11 +39,19 @@ constexpr float CLOCK_PERIOD_MAX = 4.f;     // 4 s
 // exact quantized pitch before the next one starts.
 constexpr float SLIDE_MAX_FRACTION = 0.9f;
 
+// A tied step holds its gate slightly past the step boundary, so the next
+// step re-arms the timer before it can fall. That is what makes a 303 slide
+// legato rather than two separate notes with a glide between them.
+constexpr float TIE_OVERHANG = 1.02f;
+
 struct EngineParams {
     int   density  = 8;
     int   length   = MAX_STEPS;
     int   clockDiv = 1;
-    float slide    = 0.f;      // 0..1
+    float slideKnob = 0.f;     // SLIDE attenuator, 0..1
+    float slideCv   = 0.f;     // CV SLIDE jack, 0..1 (summed per step first)
+    float gate     = 1.f;      // GATE knob as a factor: 1..200 -> 0.01..2.0
+    float accent   = 1.f;      // ACCENT knob 0..100 -> 0..1
     QuantizeParams quant{};
 };
 
@@ -73,8 +82,10 @@ struct Engine {
     // quantizer can re-run every sample and knob turns re-pitch the held note.
     int   heldPitchIndex = 0;
     float heldOctaveRaw  = 0.f;
+    int   heldOctaveJump = -1;
     int   prevPitchIndex = 0;     // where a slide starts from
     float prevOctaveRaw  = 0.f;
+    int   prevOctaveJump = -1;
     float slideProgress  = 1.f;   // 0 = at prev, 1 = arrived at held
     float slideDuration  = 0.f;   // seconds
 
@@ -88,7 +99,7 @@ struct Engine {
     }
 
     EngineOutputs process(float dt, const EngineInputs& in,
-                          const StepData* steps, const EngineParams& p) {
+                          const Pattern& pat, const EngineParams& p) {
         const int length   = clampi(p.length, 2, MAX_STEPS);
         const int clockDiv = p.clockDiv < 1 ? 1 : p.clockDiv;
 
@@ -114,7 +125,7 @@ struct Engine {
                 if (clockDivCount >= clockDiv) {
                     clockDivCount = 0;
                     step = (step + 1) % length;
-                    advanceStep(steps, p, clockDiv);
+                    advanceStep(pat, p, clockDiv);
                 }
             }
         }
@@ -147,6 +158,7 @@ struct Engine {
         StepData cur{};
         cur.pitchIndex = heldPitchIndex;
         cur.octaveRaw  = heldOctaveRaw;
+        cur.octaveJump = heldOctaveJump;
         const float target = pitchVoltage(cur, p.quant);
         if (slideProgress >= 1.f)
             return target;
@@ -154,26 +166,43 @@ struct Engine {
         StepData prev{};
         prev.pitchIndex = prevPitchIndex;
         prev.octaveRaw  = prevOctaveRaw;
+        prev.octaveJump = prevOctaveJump;
         const float from = pitchVoltage(prev, p.quant);
         return from + (target - from) * slideProgress;
     }
 
 private:
-    void advanceStep(const StepData* steps, const EngineParams& p, int clockDiv) {
-        if (steps[step].weight > p.density)
+    void advanceStep(const Pattern& pat, const EngineParams& p, int clockDiv) {
+        const StepData& st = pat.steps[step];
+        if (st.weight > p.density)
             return;                            // silent step: hold everything
 
-        const float stepDur = clockPeriod * float(clockDiv);
-        gateTimer    = steps[step].gateLength * stepDur;
-        heldVelocity = steps[step].velocity;
+        const float stepDur  = clockPeriod * float(clockDiv);
+        const float gateKnob = clampf(p.gate, 0.01f, 2.f);
+        const int   gi       = clampi(st.gateIndex, 0, NUM_GATE_LENGTHS - 1);
+
+        // One of the pattern's three note lengths, scaled by the GATE knob.
+        // Past 100% a note runs into the next step and ties.
+        float gateFrac = pat.gateLengths[gi] * gateKnob;
+
+        // Seed flag + CV, then the attenuator — see cv.hh for why the sum
+        // happens here and not upstream.
+        const float slideAmt = slideForStep(st.slide, p.slideCv, p.slideKnob);
+        const bool  tied     = slideAmt > 0.f;
+        if (tied && gateFrac < TIE_OVERHANG)
+            gateFrac = TIE_OVERHANG;           // a slide is a tie, not a gap
+
+        gateTimer    = gateFrac * stepDur;
+        heldVelocity = velocityFor(st.velLayer, p.accent);
 
         prevPitchIndex = heldPitchIndex;
         prevOctaveRaw  = heldOctaveRaw;
-        heldPitchIndex = steps[step].pitchIndex;
-        heldOctaveRaw  = steps[step].octaveRaw;
+        prevOctaveJump = heldOctaveJump;
+        heldPitchIndex = st.pitchIndex;
+        heldOctaveRaw  = st.octaveRaw;
+        heldOctaveJump = st.octaveJump;
 
-        const float slideAmt = clampf(p.slide, 0.f, 1.f);
-        if (steps[step].slide && slideAmt > 0.f) {
+        if (tied) {
             // Linear ramp over a fraction of the step. Linear, not exponential:
             // it arrives exactly (so the note ends up precisely in tune), it
             // cannot overshoot, and "reaches the target within the slide time"

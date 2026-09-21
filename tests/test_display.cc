@@ -24,45 +24,59 @@ using namespace nzzl;
 static void test_all_seeds_render() {
     for (int seed = 0; seed < NUM_SEEDS; seed++) {
         DisplayText d;
-        buildDisplay(seed, 3, 0, d);
+        buildDisplay(seed, SCALE_NAT_MINOR, 0, d);
 
         CHECK(strnlen(d.seed, DISPLAY_LEN) < DISPLAY_LEN, "seed %d: unterminated seed text", seed);
         CHECK(strnlen(d.zone, DISPLAY_LEN) < DISPLAY_LEN, "seed %d: unterminated zone text", seed);
         CHECK(strnlen(d.scale, DISPLAY_LEN) < DISPLAY_LEN, "seed %d: unterminated scale text", seed);
         CHECK(d.seed[0] && d.zone[0] && d.scale[0], "seed %d: empty display line", seed);
 
+        // The spec's format is "4 . 7" — no leading zeros.
         int g = 0, sg = 0;
         seedKnobsFor(seed, g, sg);
         char expect[DISPLAY_LEN];
-        expect[0] = 'G';
-        expect[1] = char('0' + g / 10);
-        expect[2] = char('0' + g % 10);
-        expect[3] = ' ';
-        expect[4] = 'S';
-        expect[5] = char('0' + sg / 10);
-        expect[6] = char('0' + sg % 10);
-        expect[7] = '\0';
+        int n = 0;
+        if (g >= 10) expect[n++] = char('0' + g / 10);
+        expect[n++] = char('0' + g % 10);
+        expect[n++] = ' '; expect[n++] = '.'; expect[n++] = ' ';
+        if (sg >= 10) expect[n++] = char('0' + sg / 10);
+        expect[n++] = char('0' + sg % 10);
+        expect[n] = '\0';
         CHECK(strcmp(d.seed, expect) == 0,
               "seed %d: got \"%s\", expected \"%s\"", seed, d.seed, expect);
 
-        const char* zone = styleName(styleForSeed(seed));
+        const char* zone = styleName(seed);
         CHECK(strcmp(d.zone, zone) == 0,
               "seed %d: zone \"%s\", expected \"%s\"", seed, d.zone, zone);
     }
-    printf("display: all %d seeds render a correct G##/S## and zone label\n",
+    printf("display: all %d seeds render a correct \"g . s\" and zone label\n",
            NUM_SEEDS);
 }
 
 // The zone label must actually track the three style zones.
 static void test_zone_labels() {
     DisplayText d;
-    buildDisplay(0, 3, 0, d);
+    buildDisplay(0, SCALE_NAT_MINOR, 0, d);
     CHECK(strcmp(d.zone, "BASS") == 0, "group 1 shows \"%s\"", d.zone);
-    buildDisplay(10 * 32, 3, 0, d);
+    buildDisplay(10 * 32, SCALE_NAT_MINOR, 0, d);
     CHECK(strcmp(d.zone, "RAND") == 0, "group 11 shows \"%s\"", d.zone);
-    buildDisplay(22 * 32, 3, 0, d);
-    CHECK(strcmp(d.zone, "ARP") == 0, "group 23 shows \"%s\"", d.zone);
-    printf("display: zone label follows the BASS/RAND/ARP boundaries\n");
+    // The four arp directions must each get their own arrow, per the spec.
+    const char* seen[4];
+    int base = 21 * 32;
+    for (int k = 0; k < 4; k++) {
+        buildDisplay(base + k * 8, SCALE_NAT_MINOR, 0, d);
+        CHECK(strncmp(d.zone, "ARP", 3) == 0,
+              "arp subgroup %d shows \"%s\"", k * 8 + 1, d.zone);
+        seen[k] = getScale(0).name;   // placeholder, compared below by rebuild
+        for (int j = 0; j < k; j++) {
+            DisplayText e;
+            buildDisplay(base + j * 8, SCALE_NAT_MINOR, 0, e);
+            CHECK(strcmp(d.zone, e.zone) != 0,
+                  "arp modes %d and %d share the label \"%s\"", j, k, d.zone);
+        }
+    }
+    (void)seen;
+    printf("display: zone label covers BASS, RAND and the four arp directions\n");
 }
 
 // Root and scale together, including the unquantized position.
@@ -94,11 +108,11 @@ static void test_scale_line() {
 static void test_clamping() {
     DisplayText d;
     buildDisplay(-50, -3, -9, d);
-    CHECK(strcmp(d.seed, "G01 S01") == 0, "negative seed rendered \"%s\"", d.seed);
+    CHECK(strcmp(d.seed, "1 . 1") == 0, "negative seed rendered \"%s\"", d.seed);
     CHECK(d.scale[0] == 'C', "negative root did not clamp: \"%s\"", d.scale);
 
     buildDisplay(99999, 99, 99, d);
-    CHECK(strcmp(d.seed, "G32 S32") == 0, "huge seed rendered \"%s\"", d.seed);
+    CHECK(strcmp(d.seed, "32 . 32") == 0, "huge seed rendered \"%s\"", d.seed);
     CHECK(strnlen(d.scale, DISPLAY_LEN) < DISPLAY_LEN, "huge scale index overran");
 
     // a long label must truncate inside the buffer, never past it

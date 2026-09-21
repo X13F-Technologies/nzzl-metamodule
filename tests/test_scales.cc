@@ -26,17 +26,18 @@ static const float EPS = 1e-4f;
 struct RefScale { const char* name; int n; int iv[12]; };
 static const RefScale kRef[NUM_SCALES] = {
     { "RAW",      0, {} },                        // index 0 is not a scale
-    { "CHROM",   12, {0,1,2,3,4,5,6,7,8,9,10,11} },
     { "MAJOR",    7, {0,2,4,5,7,9,11} },          // W W H W W W H
     { "MINOR",    7, {0,2,3,5,7,8,10} },          // W H W W H W W
     { "DORIAN",   7, {0,2,3,5,7,9,10} },          // minor with major 6th
     { "PHRYG",    7, {0,1,3,5,7,8,10} },          // minor with b2
-    { "PHR DOM",  7, {0,1,4,5,7,8,10} },          // phrygian with major 3rd
-    { "LYDIAN",   7, {0,2,4,6,7,9,11} },          // major with #4
     { "MIXO",     7, {0,2,4,5,7,9,10} },          // major with b7
+    { "LYDIAN",   7, {0,2,4,6,7,9,11} },          // major with #4
     { "HARM MIN", 7, {0,2,3,5,7,8,11} },          // minor with major 7th
     { "MEL MIN",  7, {0,2,3,5,7,9,11} },          // minor with major 6+7
-    { "MIN PENT", 5, {0,3,5,7,10} },
+    { "PENT MAJ", 5, {0,2,4,7,9} },
+    { "PENT MIN", 5, {0,3,5,7,10} },
+    { "CHROM",   12, {0,1,2,3,4,5,6,7,8,9,10,11} },
+    { "WHOLE",    6, {0,2,4,6,8,10} },            // whole tone
 };
 
 // The first real scale. Index 0 is RAW and has no intervals to check.
@@ -138,8 +139,9 @@ static void test_octave_range() {
 static void test_quantized_notes_in_scale() {
     long checked = 0;
     for (int seed = 0; seed < 1024; seed++) {
-        StepData st[MAX_STEPS];
-        generatePattern(seed, st);
+        Pattern pat;
+        generatePattern(seed, pat);
+        const StepData* st = pat.steps;
         for (int s = FIRST_SCALE; s < NUM_SCALES; s++) {
             const Scale& sc = getScale(s);
             for (int root = 0; root < 12; root++) {
@@ -202,8 +204,9 @@ static void test_root_transposes() {
 // the SAME scale degrees — only the key moves.
 static void test_root_stays_quantized() {
     for (int seed = 0; seed < 256; seed++) {
-        StepData st[MAX_STEPS];
-        generatePattern(seed, st);
+        Pattern pat;
+        generatePattern(seed, pat);
+        const StepData* st = pat.steps;
         for (int sc = FIRST_SCALE; sc < NUM_SCALES; sc++) {
             const Scale& scale = getScale(sc);
             for (int range = 1; range <= 5; range++) {
@@ -245,7 +248,7 @@ static void test_root_stays_quantized() {
     // Unquantized mode: root must still be an exact semitone offset, so the
     // raw pattern shifts by a musical interval rather than drifting.
     for (int idx = 0; idx < MAX_STEPS; idx++) {
-        StepData st{}; st.pitchIndex = idx; st.octaveRaw = 0.62f;
+        StepData st{}; st.pitchIndex = idx; st.octaveRaw = 0.62f; st.octaveJump = -1;
         QuantizeParams base{ SCALE_RAW, 0, 3 };
         float v0 = pitchVoltage(st, base);
         for (int root = 0; root < 12; root++) {
@@ -283,8 +286,9 @@ static void test_raw_mode() {
     float lo = 1e9f, hi = -1e9f;
     int offGrid = 0, total = 0;
     for (int seed = 0; seed < 1024; seed++) {
-        StepData st[MAX_STEPS];
-        generatePattern(seed, st);
+        Pattern pat;
+        generatePattern(seed, pat);
+        const StepData* st = pat.steps;
         QuantizeParams p{ SCALE_RAW, 0, 5 };       // unquantized, root 0, 5 octaves
         for (int i = 0; i < MAX_STEPS; i++) {
             float v = pitchVoltage(st[i], p);
@@ -302,10 +306,10 @@ static void test_raw_mode() {
           "raw mode is not audibly unquantized: only %d of %d notes off-grid",
           offGrid, total);
     // position 0 must actually differ from a real scale
-    QuantizeParams scale{ 3, 0, 5 }, raw{ SCALE_RAW, 0, 5 };
+    QuantizeParams scale{ SCALE_NAT_MINOR, 0, 5 }, raw{ SCALE_RAW, 0, 5 };
     int differs = 0;
     for (int idx = 0; idx < MAX_STEPS; idx++) {
-        StepData st{}; st.pitchIndex = idx; st.octaveRaw = 0.4f;
+        StepData st{}; st.pitchIndex = idx; st.octaveRaw = 0.4f; st.octaveJump = -1;
         if (std::fabs(pitchVoltage(st, scale) - pitchVoltage(st, raw)) > EPS)
             differs++;
     }
@@ -313,7 +317,7 @@ static void test_raw_mode() {
 
     // quantizedVoltage must never quantize against the empty RAW table
     for (int idx = 0; idx < MAX_STEPS; idx++) {
-        StepData st{}; st.pitchIndex = idx; st.octaveRaw = 0.4f;
+        StepData st{}; st.pitchIndex = idx; st.octaveRaw = 0.4f; st.octaveJump = -1;
         CHECK(std::fabs(quantizedVoltage(idx, 0.4f, raw) - pitchVoltage(st, raw)) < EPS,
               "quantizedVoltage did not fall back to raw at index %d", idx);
     }
@@ -324,9 +328,10 @@ static void test_raw_mode() {
 // Same seed + same params must always give the same voltage.
 static void test_pitch_determinism() {
     for (int seed = 0; seed < 1024; seed++) {
-        StepData a[MAX_STEPS], b[MAX_STEPS];
-        generatePattern(seed, a);
-        generatePattern(seed, b);
+        Pattern pa, pb;
+        generatePattern(seed, pa);
+        generatePattern(seed, pb);
+        const StepData *a = pa.steps, *b = pb.steps;
         QuantizeParams p{ seed % NUM_SCALES, seed % 12, 1 + (seed % 5) };
         for (int i = 0; i < MAX_STEPS; i++)
             CHECK(pitchVoltage(a[i], p) == pitchVoltage(b[i], p),

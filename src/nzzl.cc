@@ -25,6 +25,8 @@ struct NZZL : engine::Module {
         ROOT_PARAM,
         SCALE_PARAM,
         SLIDE_PARAM,
+        GATE_PARAM,
+        ACCENT_PARAM,
         PARAMS_LEN
     };
 
@@ -55,12 +57,13 @@ struct NZZL : engine::Module {
         LIGHTS_LEN
     };
 
-    nzzl::StepData steps[nzzl::MAX_STEPS] = {};
+    nzzl::Pattern pattern = {};
     nzzl::Engine   engine;
 
     int seedIndex     = -1;      // effective seed (knobs + CV SEED)
-    int displayScale  = 3;
+    int displayScale  = nzzl::SCALE_NAT_MINOR;
     int displayRoot   = 0;
+    float reseedFlash = 0.f;     // seconds remaining on the display indicator
 
     NZZL() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -75,11 +78,17 @@ struct NZZL : engine::Module {
             {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"});
         // Position 0 is unquantized — this knob replaces the old SCALE LOCK
         // switch, so one control answers "how are these notes pitched?".
-        configSwitch(SCALE_PARAM, 0.f, float(nzzl::NUM_SCALES - 1), 3.f, "Scale",
-            {"Unquantized", "Chromatic", "Major", "Natural Minor", "Dorian",
-             "Phrygian", "Phrygian Dominant", "Lydian", "Mixolydian",
-             "Harmonic Minor", "Melodic Minor", "Minor Pentatonic"});
-        configParam(SLIDE_PARAM, 0.f, 1.f, 0.f, "Slide");
+        configSwitch(SCALE_PARAM, 0.f, float(nzzl::NUM_SCALES - 1),
+            float(nzzl::SCALE_NAT_MINOR), "Scale",
+            {"Unquantized", "Major", "Natural Minor", "Dorian", "Phrygian",
+             "Mixolydian", "Lydian", "Harmonic Minor", "Melodic Minor",
+             "Pentatonic Major", "Pentatonic Minor", "Chromatic", "Whole Tone"});
+        configParam(SLIDE_PARAM,  0.f, 1.f, 0.f, "Slide");
+        // GATE scales the pattern's three note lengths together. Past 100%
+        // notes run into the next step and tie.
+        configParam(GATE_PARAM,   1.f, 200.f, 100.f, "Gate", "%");
+        // ACCENT scales the contrast between the three velocity layers.
+        configParam(ACCENT_PARAM, 0.f, 100.f, 100.f, "Accent", "%");
 
         getParamQuantity(GROUP_PARAM)->snapEnabled      = true;
         getParamQuantity(SUBGROUP_PARAM)->snapEnabled   = true;
@@ -91,10 +100,10 @@ struct NZZL : engine::Module {
         configInput(CLOCK_INPUT,    "Clock");
         configInput(RUN_INPUT,      "Run (trigger toggles)");
         configInput(RESEED_INPUT,   "Reseed (trigger)");
-        configInput(CV_SCALE_INPUT, "CV Scale (1V per position)");
-        configInput(CV_SEED_INPUT,  "CV Seed (10V spans all 1024)");
-        configInput(CV_ROOT_INPUT,  "CV Root (V/oct)");
-        configInput(CV_SLIDE_INPUT, "CV Slide (10V full range)");
+        configInput(CV_SCALE_INPUT, "CV Scale (override, 0-10V spans the list)");
+        configInput(CV_SEED_INPUT,  "CV Seed (offset, 10V spans all 1024)");
+        configInput(CV_ROOT_INPUT,  "CV Root (override, V/oct)");
+        configInput(CV_SLIDE_INPUT, "CV Slide (summed with the seed's slide)");
 
         configOutput(CV_PITCH_OUTPUT, "CV Pitch");
         configOutput(GATE_OUTPUT,     "Gate");
@@ -110,6 +119,7 @@ struct NZZL : engine::Module {
         // hand — a seed you can hear but not dial in would be a dead end.
         params[GROUP_PARAM].setValue(float(group));
         params[SUBGROUP_PARAM].setValue(float(subgroup));
+        reseedFlash = 0.35f;     // brief display indicator, per the spec
     }
 
     void process(const ProcessArgs& args) override {
@@ -117,6 +127,7 @@ struct NZZL : engine::Module {
             engine.reseedRequested = false;
             reseed();
         }
+        if (reseedFlash > 0.f) reseedFlash -= args.sampleTime;
 
         const int group    = (int)std::round(params[GROUP_PARAM].getValue());
         const int subgroup = (int)std::round(params[SUBGROUP_PARAM].getValue());
@@ -129,17 +140,19 @@ struct NZZL : engine::Module {
 
         if (effectiveSeed != seedIndex) {
             seedIndex = effectiveSeed;
-            nzzl::generatePattern(seedIndex, steps);
+            nzzl::generatePattern(seedIndex, pattern);
         }
 
         nzzl::EngineParams p;
         p.density  = (int)std::round(params[DENSITY_PARAM].getValue());
         p.length   = (int)std::round(params[LENGTH_PARAM].getValue());
         p.clockDiv = (int)std::round(params[CLOCK_DIV_PARAM].getValue());
-        p.slide    = nzzl::applySlideCv(
-            params[SLIDE_PARAM].getValue(),
+        p.slideKnob = params[SLIDE_PARAM].getValue();
+        p.slideCv   = nzzl::cvSlideAmount(
             inputs[CV_SLIDE_INPUT].getVoltage(),
             inputs[CV_SLIDE_INPUT].isConnected());
+        p.gate      = params[GATE_PARAM].getValue() / 100.f;
+        p.accent    = params[ACCENT_PARAM].getValue() / 100.f;
 
         p.quant.octaveRange = (int)std::round(params[OCTAVE_RANGE_PARAM].getValue());
         p.quant.scaleIndex  = nzzl::applyScaleCv(
@@ -162,7 +175,7 @@ struct NZZL : engine::Module {
         in.reseedConnected = inputs[RESEED_INPUT].isConnected();
 
         const nzzl::EngineOutputs out =
-            engine.process(args.sampleTime, in, steps, p);
+            engine.process(args.sampleTime, in, pattern, p);
 
         outputs[CV_PITCH_OUTPUT].setVoltage(out.pitch);
         outputs[GATE_OUTPUT].setVoltage(out.gate);
@@ -218,6 +231,7 @@ struct NZZLDisplay : NZZLDisplayBase {
             nzzl::buildDisplay(0, 3, 0, d);      // browser preview
 
         const char* text = (line == 0) ? d.seed : (line == 1) ? d.zone : d.scale;
+        const bool flash = module && module->reseedFlash > 0.f;
 
 #ifndef NZZL_METAMODULE
         // MetaModule supplies the face itself via the `font` field set on the
@@ -230,7 +244,8 @@ struct NZZLDisplay : NZZLDisplayBase {
         nvgFontFaceId(args.vg, font->handle);
 #endif
         nvgFontSize(args.vg, fontSize);
-        nvgFillColor(args.vg, nvgRGB(0x33, 0xff, 0x99));
+        nvgFillColor(args.vg, flash ? nvgRGB(0xff, 0xcc, 0x44)
+                                    : nvgRGB(0x33, 0xff, 0x99));
         nvgTextAlign(args.vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
         nvgText(args.vg, 2.f, 1.f, text, NULL);
     }
@@ -324,8 +339,8 @@ struct NZZLWidget : app::ModuleWidget {
 
         // ── Controls (left two columns) ──────────────────────────────────────
         const float cx1 = 30.f, cx2 = 85.f;
-        float y = 80.f;
-        const float dy = 47.f;
+        float y = 76.f;
+        const float dy = 44.f;
 
         addKnobWithLabel(math::Vec(cx1, y), module, NZZL::GROUP_PARAM,    "GROUP");
         addKnobWithLabel(math::Vec(cx2, y), module, NZZL::SUBGROUP_PARAM, "SUBGRP");
@@ -339,8 +354,10 @@ struct NZZLWidget : app::ModuleWidget {
         addKnobWithLabel(math::Vec(cx1, y), module, NZZL::ROOT_PARAM,  "ROOT");
         addKnobWithLabel(math::Vec(cx2, y), module, NZZL::SCALE_PARAM, "SCALE");
         y += dy;
-        addKnobWithLabel(math::Vec(cx1, y), module, NZZL::SLIDE_PARAM, "SLIDE");
-        // cx2 on this row is free — SCALE LOCK folded into the SCALE knob.
+        addKnobWithLabel(math::Vec(cx1, y), module, NZZL::SLIDE_PARAM,  "SLIDE");
+        addKnobWithLabel(math::Vec(cx2, y), module, NZZL::GATE_PARAM,   "GATE");
+        y += dy;
+        addKnobWithLabel(math::Vec(cx1, y), module, NZZL::ACCENT_PARAM, "ACCENT");
 
         // ── Jacks ────────────────────────────────────────────────────────────
         const float jx1 = 150.f, jx2 = 200.f;

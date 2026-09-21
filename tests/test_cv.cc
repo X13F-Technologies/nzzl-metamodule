@@ -66,41 +66,46 @@ static void test_unpatched_is_neutral() {
         CHECK(applyScaleCv(5, v, false) == 5, "unpatched CV SCALE moved the scale");
         CHECK(applyRootCv(7, v, false) == 7,  "unpatched CV ROOT moved the root");
         CHECK(applySeedCv(300, v, false) == 300, "unpatched CV SEED moved the seed");
-        CHECK(applySlideCv(0.4f, v, false) == 0.4f, "unpatched CV SLIDE moved slide");
+        CHECK(cvSlideAmount(v, false) == 0.f, "unpatched CV SLIDE contributed slide");
+        CHECK(std::fabs(slideForStep(true, cvSlideAmount(v, false), 0.4f) - 0.4f) < 1e-5f,
+              "unpatched CV SLIDE changed a flagged step's slide");
     }
     printf("unpatched: every CV input is a no-op when nothing is plugged in\n");
 }
 
 // ── CV SCALE: 1 V per position, clamped ─────────────────────────────────────
 static void test_cv_scale() {
-    CHECK(applyScaleCv(3, 0.f, true) == 3, "0 V should not offset");
-    CHECK(applyScaleCv(3, 1.f, true) == 4, "1 V should be +1 position");
-    CHECK(applyScaleCv(3, -1.f, true) == 2, "-1 V should be -1 position");
-    CHECK(applyScaleCv(3, 2.4f, true) == 5, "2.4 V should round to +2");
-    CHECK(applyScaleCv(3, 2.6f, true) == 6, "2.6 V should round to +3");
+    // Override: when patched the knob is ignored and the voltage names the
+    // position, 0-10 V across the whole list.
+    CHECK(applyScaleCv(7, 0.f, true) == 0, "0 V should select position 0 (unquantized)");
+    CHECK(applyScaleCv(7, 10.f, true) == NUM_SCALES - 1, "10 V should select the last scale");
+    CHECK(applyScaleCv(0, 5.f, true) == (NUM_SCALES - 1) / 2,
+          "5 V should land mid-list, got %d", applyScaleCv(0, 5.f, true));
+    CHECK(applyScaleCv(7, 3.f, true) == applyScaleCv(2, 3.f, true),
+          "the knob still influenced an overridden scale");
 
     // clamps at both ends, for any voltage a module might send
     for (float v = -20.f; v <= 20.f; v += 0.13f) {
-        for (int knob = 0; knob < NUM_SCALES; knob++) {
-            int r = applyScaleCv(knob, v, true);
-            CHECK(r >= 0 && r < NUM_SCALES,
-                  "knob %d at %.2f V gave scale %d", knob, v, r);
-        }
+        int r = applyScaleCv(4, v, true);
+        CHECK(r >= 0 && r < NUM_SCALES, "%.2f V gave scale %d", v, r);
     }
-    // a big negative CV must be able to reach unquantized, and a big positive
-    // one the last scale — the input should span the list
-    CHECK(applyScaleCv(11, -20.f, true) == 0, "CV cannot reach unquantized");
-    CHECK(applyScaleCv(0, 20.f, true) == NUM_SCALES - 1, "CV cannot reach the last scale");
-    printf("CV scale: 1 V per position, clamped, spans the whole list\n");
+    // every position reachable by sweeping 0-10 V
+    bool reached[NUM_SCALES] = {};
+    for (float v = 0.f; v <= 10.f; v += 0.002f) reached[applyScaleCv(0, v, true)] = true;
+    for (int i = 0; i < NUM_SCALES; i++)
+        CHECK(reached[i], "scale position %d unreachable by a 0-10 V sweep", i);
+    printf("CV scale: override, 0-10 V spans all %d positions, clamped\n", NUM_SCALES);
 }
 
 // ── CV ROOT: V/oct, whole semitones only, wraps ─────────────────────────────
 static void test_cv_root() {
-    CHECK(applyRootCv(0, 0.f, true) == 0, "0 V should not transpose");
-    CHECK(applyRootCv(0, 1.f / 12.f, true) == 1, "1 semitone CV should be +1");
-    CHECK(applyRootCv(0, 7.f / 12.f, true) == 7, "a fifth CV should be +7");
+    CHECK(applyRootCv(9, 0.f, true) == 0, "0 V should name C, overriding the knob");
+    CHECK(applyRootCv(0, 1.f / 12.f, true) == 1, "1 semitone CV should name C#");
+    CHECK(applyRootCv(0, 7.f / 12.f, true) == 7, "a fifth CV should name G");
     CHECK(applyRootCv(0, 1.f, true) == 0, "1 V (an octave) should wrap to the same root");
-    CHECK(applyRootCv(5, -1.f, true) == 5, "-1 V should wrap back to the same root");
+    CHECK(applyRootCv(5, -1.f, true) == 0, "-1 V should wrap to C, not to the knob");
+    CHECK(applyRootCv(3, 0.5f, true) == applyRootCv(11, 0.5f, true),
+          "the knob still influenced an overridden root");
 
     // THE INVARIANT: whatever the voltage, the result is always a whole
     // semitone in 0..11 — a smooth CV can never de-quantize the output.
@@ -114,17 +119,18 @@ static void test_cv_root() {
         reached[applyRootCv(0, v, true)] = true;
     for (int i = 0; i < 12; i++)
         CHECK(reached[i], "root %d unreachable by sweeping CV ROOT over one octave", i);
-    printf("CV root: V/oct, always a whole semitone, wraps, all 12 reachable\n");
+    printf("CV root: override, V/oct, always a whole semitone, all 12 reachable\n");
 }
 
 // A smooth ramp into CV ROOT must produce a staircase, not a slide.
 static void test_cv_root_never_dequantizes() {
     QuantizeParams p;
-    p.scaleIndex = 3;            // natural minor
+    p.scaleIndex = SCALE_NAT_MINOR;
     p.octaveRange = 2;
     StepData st{};
     st.pitchIndex = 9;
     st.octaveRaw = 0.5f;
+    st.octaveJump = -1;
 
     const Scale& sc = getScale(p.scaleIndex);
     for (float v = -5.f; v <= 5.f; v += 0.0007f) {
@@ -167,20 +173,44 @@ static void test_cv_seed() {
     printf("CV seed: offset, wraps, a +/-5 V sweep reaches all %d seeds\n", NUM_SEEDS);
 }
 
-// ── CV SLIDE: 10 V spans the knob, clamped ──────────────────────────────────
+// ── CV SLIDE: summed with the seed flag, then attenuated ────────────────────
 static void test_cv_slide() {
-    CHECK(applySlideCv(0.f, 0.f, true) == 0.f, "0 V should not offset slide");
-    CHECK(std::fabs(applySlideCv(0.f, 10.f, true) - 1.f) < 1e-5f,
-          "10 V should be the full slide range");
-    CHECK(std::fabs(applySlideCv(0.5f, 2.5f, true) - 0.75f) < 1e-5f,
-          "2.5 V should add a quarter of the range");
-    for (float v = -20.f; v <= 20.f; v += 0.07f) {
-        for (float knob = 0.f; knob <= 1.f; knob += 0.25f) {
-            float r = applySlideCv(knob, v, true);
-            CHECK(r >= 0.f && r <= 1.f, "knob %.2f at %.2f V gave slide %f", knob, v, r);
-        }
+    // the jack's own contribution
+    CHECK(cvSlideAmount(0.f, true) == 0.f, "0 V contributed slide");
+    CHECK(std::fabs(cvSlideAmount(10.f, true) - 1.f) < 1e-5f, "10 V is not full range");
+    CHECK(std::fabs(cvSlideAmount(2.5f, true) - 0.25f) < 1e-5f, "2.5 V is not a quarter");
+    CHECK(cvSlideAmount(-5.f, true) == 0.f, "negative CV was not clamped");
+    CHECK(cvSlideAmount(50.f, true) == 1.f, "over-range CV was not clamped");
+
+    // THE ATTENUATOR RULE: CCW kills slide however much CV arrives.
+    for (float cv = 0.f; cv <= 1.f; cv += 0.05f) {
+        CHECK(slideForStep(true,  cv, 0.f) == 0.f,
+              "knob CCW still allowed slide on a flagged step at cv %.2f", cv);
+        CHECK(slideForStep(false, cv, 0.f) == 0.f,
+              "knob CCW still allowed slide on an unflagged step at cv %.2f", cv);
     }
-    printf("CV slide: 10 V spans the knob, clamped to 0..1\n");
+    // a flagged step at full knob is full slide, with or without CV
+    CHECK(std::fabs(slideForStep(true, 0.f, 1.f) - 1.f) < 1e-5f,
+          "a flagged step at full knob is not full slide");
+    CHECK(std::fabs(slideForStep(true, 1.f, 1.f) - 1.f) < 1e-5f,
+          "CV pushed a flagged step past full slide");
+    // CV puts glide on steps the seed did NOT flag — the useful direction
+    CHECK(slideForStep(false, 0.f, 1.f) == 0.f,
+          "an unflagged step slid with no CV");
+    CHECK(std::fabs(slideForStep(false, 0.5f, 1.f) - 0.5f) < 1e-5f,
+          "CV did not add slide to an unflagged step");
+    // the knob scales the sum, so it is a multiplier not an addend
+    CHECK(std::fabs(slideForStep(false, 1.f, 0.5f) - 0.5f) < 1e-5f,
+          "the knob did not attenuate the CV contribution");
+
+    // always in range, whatever arrives
+    for (float cv = -2.f; cv <= 2.f; cv += 0.07f)
+        for (float k = -1.f; k <= 2.f; k += 0.1f)
+            for (int f = 0; f < 2; f++) {
+                float r = slideForStep(f != 0, cv, k);
+                CHECK(r >= 0.f && r <= 1.f, "slide %f out of 0..1", r);
+            }
+    printf("CV slide: summed with the seed flag then attenuated; CCW always kills it\n");
 }
 
 int main() {
