@@ -1,9 +1,11 @@
 # NZZL — Design Record
 
-This document is the authoritative record of design decisions. The full
-product spec (jacks, knobs, seed system, styles, scales) lives in the
-original handoff requirements; this file records **how** we're building it
-and **why**, so any session can pick up the work without re-deriving it.
+This document is the authoritative record of design decisions. The source
+spec now lives in the repo as **[HANDOFF_SPEC.md](HANDOFF_SPEC.md)** (copied
+in 2026-09-20 — before that, three sessions were building against a one-line
+paraphrase of it). That file is the requirements; this one records **how**
+we're building them and **why**, including every place we deliberately
+deviate — see § Deviations from the handoff spec.
 
 ---
 
