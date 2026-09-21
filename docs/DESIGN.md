@@ -79,6 +79,8 @@ MetaModule (CI ARM cross-compile) via the SDK's rack-interface shim.
 
 **Position 0 is UNQUANTIZED, not a scale.** There is no separate SCALE LOCK
 switch — it was folded into the SCALE knob (user decision, 2026-09-20).
+Positions 1–12 are then the handoff spec's twelve scales in its order, so
+folding the toggle in costs no scale: the knob simply has 13 positions.
 
 *Why:* one control now answers the whole question "how are these notes
 pitched?" instead of two that interact. It frees a panel position, which
@@ -89,20 +91,19 @@ finding your scale again on the knob. Blues was dropped to make room.
 
 **Scale order is an on-disk contract.** `SCALE_PARAM` stores an index, so
 inserting a scale mid-list would retune every saved patch. **Append only,
-never reorder.** The frozen order is:
+never reorder.** The order is the spec's, with unquantized prepended:
 
 | # | Scale | # | Scale |
 |---|-------|---|-------|
-| **0** | **Unquantized** | 6 | Phrygian Dominant |
-| 1 | Chromatic | 7 | Lydian |
-| 2 | Major | 8 | Mixolydian |
-| 3 | Natural Minor *(default)* | 9 | Harmonic Minor |
-| 4 | Dorian | 10 | Melodic Minor |
-| 5 | Phrygian | 11 | Minor Pentatonic |
+| **0** | **Unquantized** | 7 | Harmonic Minor |
+| 1 | Major | 8 | Melodic Minor |
+| 2 | Natural Minor *(default)* | 9 | Pentatonic Major |
+| 3 | Dorian | 10 | Pentatonic Minor |
+| 4 | Phrygian | 11 | Chromatic |
+| 5 | Mixolydian | 12 | Whole Tone |
+| 6 | Lydian | | |
 
-*Why this set:* twelve slots were fixed by the knob range, and position 0 now
-spends one of them on raw mode. Locrian, major pentatonic and Blues are the
-casualties. Verified against an independently written reference table in
+Verified against an independently written reference table in
 `test_scale_tables`.
 
 The RAW entry in the table carries `noteCount == 0` and no intervals.
@@ -218,12 +219,14 @@ into a pure function in a header, write its test, then wire it into
 | 4 | Gate output + density logic | 🔶 built, **awaiting user test** |
 | 5 | Pitch output: scales.hh, root, octave, scale position 0 | 🔶 built, **awaiting user test** |
 | 6 | Velocity output | ✅ done early (folded into 3/4) |
-| 7 | Slide / portamento (+ `engine.hh` extraction) | 🔶 built, **awaiting user test** |
-| 8 | Style zones (bassline / random / arp) | 🔶 built, **awaiting user test** |
+| 7 | Slide / portamento — now a 303 tie (+ `engine.hh` extraction) | 🔶 built, **awaiting user test** |
+| 8 | Style zones — 303 bass / random / four arp directions | 🔶 built, **awaiting user test** |
 | 9 | Reseed trigger + knob sync | 🔶 built, **awaiting user test** |
 | 10 | CV inputs (scale/seed/root/slide) | 🔶 built, **awaiting user test** |
 | 11 | Display (MetaModule TextDisplay) | 🔶 text built + tested; **rendering unverified on hardware** |
 | 12 | Patch state save (dataToJson/dataFromJson) | 🔶 built, **awaiting user test** |
+| — | GATE knob (three note lengths, 1–200% scaler) | 🔶 built, **awaiting user test** |
+| — | ACCENT knob (three velocity layers, 0–100% scaler) | 🔶 built, **awaiting user test** |
 | — | Panel layout + labels (VCV widget & MetaModule panel) | 🔶 built, **awaiting user test** |
 
 **Task 4 test checklist (pending):** gates fire irregularly per seed; DENSITY
@@ -264,18 +267,105 @@ All four open questions from the original deferral list are now settled.
 
 - **Whether folding SCALE LOCK into the SCALE knob was right.** Costs the
   ability to A/B back to your scale. Test T5.11b in the system test guide.
-- **Whether Blues should have stayed** in the scale list instead of Melodic
-  Minor. Free to change until patches exist.
+- **The 303 shaping constants** at the top of `pattern.hh` — run count, run
+  length, root dominance, tie and octave-jump rates. These are the dials that
+  decide whether the bass zone sounds right, and they were set by ear-free
+  reasoning. Expect to move them after the first real listen.
 - **Hardware display rendering.** The text is fully tested; whether
   `MetaModule::VCVTextDisplay` actually paints it is unverified and needs the
   physical module.
 
 ---
 
-## Style zones (Task 8)
+## Deviations from the handoff spec
 
-GROUP splits the 1024 seeds into three zones: **1–10 BASS**, **11–22 RAND**,
-**23–32 ARP**.
+Four places where the build knowingly differs from
+[HANDOFF_SPEC.md](HANDOFF_SPEC.md). Each was a user decision, not an
+oversight. Anything not listed here follows the spec.
+
+| Spec says | We build | Why |
+|---|---|---|
+| RUN: "Gate high = runs, gate low = holds" | RUN is a **toggle trigger** — a rising edge flips running/stopped | User request, early on. A toggle works with a momentary button; a level needs a latching gate source. |
+| SCALE LOCK: an on/off toggle beside a 12-scale knob | **Position 0 of the SCALE knob** is unquantized; 13 positions total | User request, 2026-09-20. One control answers "how are these notes pitched?" instead of two that can disagree; frees a panel position; lets CV SCALE reach raw mode without a second jack. Costs the ability to A/B back to your scale. |
+| Bassline: "notes cluster on beats 1 and 3, sparse off-beat, gate mostly short" | **303 acid**: runs of sixteenths, ties, root-hammering, octave jumps | User request, 2026-09-20: *"ideally id want the bass algos to simulate 303 style sequences."* The spec's description is a dub/house bassline; the module is named after and aimed at acid. |
+| Gate length: per-step, seed-derived | **Three note lengths per pattern** + a GATE knob (1–200%) scaling all three; velocity likewise becomes three layers + an ACCENT knob | User request, 2026-09-20, after a reference module. A small audible set you can scale beats sixteen unrelated numbers you cannot. |
+
+**Everything else tracks the spec**, including the bits an earlier pass had
+wrong: zone boundaries (1–10 / 11–21 / 22–32), the arp subgroup directions,
+the twelve scales in the spec's order, and the CV jacks' override-vs-offset
+semantics.
+
+---
+
+## The bass zone, and the bug that shaped it
+
+**What went wrong.** The first cut of the bass style pulled the four lowest
+weights onto a fixed `BEAT_PRIORITY` table — steps 0, 8, 4, 12. Since those
+four weights are exactly what DENSITY 4 plays, **all 320 bass seeds played
+the same four positions in the bar.** The zone had 320 seeds and one rhythm.
+Nothing caught it because the test measured "percentage of notes on a beat",
+which a collapsed zone scores *perfectly* on.
+
+**The fix, and the test that would have caught it.** Bass now builds a
+per-seed priority order and lays weights 1–16 along it:
+
+1. the downbeat leads, 85% of seeds
+2. four runs of 2–4 consecutive sixteenths, at seed-chosen start points
+3. whatever is left, in order
+
+Laying 1–16 along a permutation of positions is still a permutation, so
+DENSITY stays exactly linear. `test_bass_rhythm_varies_between_seeds` counts
+**distinct active-step sets across the whole zone** — the measurement that
+actually asks the question — and asserts floors at every density:
+
+| DENSITY | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| distinct bass rhythms (of 320 seeds) | 16 | 29 | 46 | **100** | 145 | 189 |
+| distinct random rhythms (of 352) | 16 | 111 | 265 | 317 | 339 | 346 |
+
+Bass stays deliberately more constrained than random — that is what makes it
+a style — and the test asserts that direction too, so "fix" by making bass
+uniform would fail just as loudly as the collapse did.
+
+**Why 303 and not the spec's bassline.** A TB-303 line is not notes on beats
+1 and 3. It is sixteenth-note runs broken by rests, with slides welding notes
+into each other, the root hammered far more than anything else, and the odd
+octave jump. Shaping constants live at the top of `pattern.hh`; the measured
+result is 63% of notes immediately followed by another (random zone: 34%),
+55% root, 18% octave-up, 32% tied.
+
+**A slide is a tie.** On a 303 the slide button does not just glide the
+pitch — it holds the gate through into the next note. `engine.hh` gives a
+tied step a gate of `TIE_OVERHANG` (1.02) steps so the next step re-arms the
+timer before it can fall. Without this, "slide" is two separate notes with a
+portamento between them, which is not the sound.
+
+---
+
+## GATE and ACCENT
+
+A pattern generates **three note lengths** (short 0.12–0.30, mid 0.35–0.60,
+long 0.65–0.95 of a step) and each step indexes one. The **GATE** knob
+(1–200%) scales all three together.
+
+The interesting consequence is at the top of the range: at 200% the long
+notes exceed a step and tie, while the short ones are still only 0.6 of a
+step and stay staccato. So the knob **morphs** a pattern from staccato toward
+partly legato rather than flipping everything at once — which is exactly what
+you want for acid, and what a single continuous per-step gate length could
+never do.
+
+**ACCENT** (0–100%) works the same way over three velocity layers (off 0.22,
+low 0.55, high 1.0). At 0 every note sits at the same mid level; at 100 the
+layers are fully apart — 7.8 V of measured spread at the output.
+
+---
+
+## Style zones
+
+GROUP splits the 1024 seeds into three zones, per the spec: **1–10 BASS**,
+**11–21 RAND**, **22–32 ARP**. Inside the ARP zone the SUBGROUP knob picks
+the direction — **1–8 up, 9–16 down, 17–24 up-down, 25–32 down-up**.
 
 The style layer runs *after* the base pattern, from its own `SALT_STYLE`
 stream, and **STYLE_RANDOM is a deliberate no-op**. That is what invariant 2
@@ -287,24 +377,34 @@ adding character to the module didn't silently retune everything else.
 
 | | BASS | RAND | ARP |
 |---|---|---|---|
-| Rhythm | lowest weights pulled onto strong beats | untouched | untouched |
-| Pitch | anchored on root and fifth | untouched | sorted into 4-step runs |
-| Gate | shorter, punchier (0.10–0.58) | as generated (0.10–0.90) | even, mid (0.25–0.49) |
-| Measured | 78% of DENSITY-4 notes on the beat (chance 25%), 69% on root/fifth (chance 31%) | at chance | 100% of 4-step blocks are runs (random zone 12%) |
+| Rhythm | per-seed runs of sixteenths, downbeat-led | untouched | untouched |
+| Pitch | root-dominated acid vocabulary | untouched | sorted, read out in the subgroup's direction |
+| Octave | +1 jumps on 18% of notes | untouched | spread across the range |
+| Gate | short and mid only | all three lengths | one length throughout |
+| Ties | 32% of steps | 25% | none |
+| Measured | 63% of notes run into the next (random 34%), 55% root, 100 distinct rhythms at DENSITY 4 | at chance | every pattern monotonic in its direction |
 
 ---
 
 ## CV input conventions (Task 10)
 
-**Every CV input is an offset on its knob, never an absolute value** — see the
-CV SEED note above for why.
+The spec is explicit and the four jacks are **not** all the same. An earlier
+pass made them all offsets; this matches the wording instead.
 
-| Input | Scaling | Out of range |
+| Input | Spec wording | Behaviour |
 |---|---|---|
-| cvSCALE | 1 V per scale position | clamps (nothing musical past either end) |
-| cvROOT | V/oct — 1 V = 12 semitones | wraps (past B is just C again) |
-| cvSEED | 10 V spans all 1024 seeds | wraps (so an LFO sweeps continuously) |
-| cvSLIDE | 10 V spans the knob's 0–1 travel | clamps |
+| cvSCALE | "CV **override** for scale selection" | patched = the voltage names the position, knob ignored. 0–10 V spans all 13, clamped |
+| cvROOT | "CV **override** for root note" | patched = the voltage names the key, knob ignored. V/oct, snapped to whole semitones, wraps |
+| cvSEED | "CV **offset** for seed selection" | added to the knob seed. 10 V spans all 1024, wraps so an LFO sweeps continuously |
+| cvSLIDE | "summed with seed-derived slide, **scaled by attenuator knob**" | `knob × clamp01(seedFlag + cv)` — see below |
+
+**The slide chain's order matters.** Because the knob multiplies the sum
+rather than adding to it, CCW kills slide outright however much CV is
+arriving — which is what the spec means by *"CCW = no slide regardless of
+seed"*. And because the CV is summed against each step's own flag, a patched
+CV puts glide on steps the seed never flagged: sweep the jack and the line
+goes from articulated to fully legato. The knob and the CV therefore cannot
+be pre-mixed into one number; the engine needs both.
 
 **cvROOT snapping to whole semitones is load-bearing, not cosmetic.** A smooth
 CV passed straight into the pitch formula would de-quantize the output and
