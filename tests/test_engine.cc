@@ -42,7 +42,7 @@ struct Clock {
 
 // Run the engine for `seconds`, calling `each(out, t)` every sample.
 template <typename F>
-static void run(Engine& e, Clock& clk, const StepData* steps,
+static void run(Engine& e, Clock& clk, const Pattern& pat,
                 const EngineParams& p, float seconds, F each,
                 float runV = 0.f, bool runConnected = false) {
     int n = int(seconds * SR);
@@ -51,15 +51,15 @@ static void run(Engine& e, Clock& clk, const StepData* steps,
         in.clock = clk.tick(DT);
         in.run = runV;
         in.runConnected = runConnected;
-        each(e.process(DT, in, steps, p), float(i) * DT);
+        each(e.process(DT, in, pat, p), float(i) * DT);
     }
 }
 
 // ── clock, divide, length ────────────────────────────────────────────────────
 
 static void test_clock_advances_steps() {
-    StepData s[MAX_STEPS];
-    generatePattern(0, s);
+    Pattern pat;
+    generatePattern(0, pat);
     EngineParams p;              // density 8, length 16, div 1
 
     Engine e;
@@ -67,7 +67,7 @@ static void test_clock_advances_steps() {
     int seen[MAX_STEPS] = {};
     int lastStep = e.step;
     int advances = 0;
-    run(e, clk, s, p, 4.f, [&](EngineOutputs, float) {
+    run(e, clk, pat, p, 4.f, [&](EngineOutputs, float) {
         if (e.step != lastStep) { advances++; lastStep = e.step; }
         seen[e.step]++;
     });
@@ -80,8 +80,8 @@ static void test_clock_advances_steps() {
 }
 
 static void test_clock_divide() {
-    StepData s[MAX_STEPS];
-    generatePattern(0, s);
+    Pattern pat;
+    generatePattern(0, pat);
 
     for (int div = 1; div <= 8; div++) {
         EngineParams p;
@@ -90,7 +90,7 @@ static void test_clock_divide() {
         Clock clk(0.05f);        // 20 Hz
         int advances = 0;
         int lastStep = e.step;
-        run(e, clk, s, p, 4.f, [&](EngineOutputs, float) {
+        run(e, clk, pat, p, 4.f, [&](EngineOutputs, float) {
             if (e.step != lastStep) { advances++; lastStep = e.step; }
         });
         int pulses = 80;                    // 4 s at 20 Hz
@@ -102,8 +102,8 @@ static void test_clock_divide() {
 }
 
 static void test_length_wraps() {
-    StepData s[MAX_STEPS];
-    generatePattern(7, s);
+    Pattern pat;
+    generatePattern(7, pat);
 
     for (int len = 2; len <= MAX_STEPS; len++) {
         EngineParams p;
@@ -111,7 +111,7 @@ static void test_length_wraps() {
         Engine e;
         Clock clk(0.02f);
         int maxStep = 0;
-        run(e, clk, s, p, 2.f, [&](EngineOutputs, float) {
+        run(e, clk, pat, p, 2.f, [&](EngineOutputs, float) {
             if (e.step > maxStep) maxStep = e.step;
             CHECK(e.step < len, "length %d: step reached %d", len, e.step);
         });
@@ -123,7 +123,7 @@ static void test_length_wraps() {
     bad.length = 99;
     Engine e2;
     Clock c2(0.02f);
-    run(e2, c2, s, bad, 0.5f, [&](EngineOutputs, float) {
+    run(e2, c2, pat, bad, 0.5f, [&](EngineOutputs, float) {
         CHECK(e2.step >= 0 && e2.step < MAX_STEPS, "clamped length still overran");
     });
     printf("length: every length 2..16 wraps correctly and clamps out of range\n");
@@ -132,15 +132,15 @@ static void test_length_wraps() {
 // ── run / stop ───────────────────────────────────────────────────────────────
 
 static void test_run_toggle() {
-    StepData s[MAX_STEPS];
-    generatePattern(3, s);
+    Pattern pat;
+    generatePattern(3, pat);
     EngineParams p;
 
     Engine e;
     Clock clk(0.05f);
 
     // free-run with RUN unpatched
-    run(e, clk, s, p, 0.5f, [](EngineOutputs, float) {});
+    run(e, clk, pat, p, 0.5f, [](EngineOutputs, float) {});
     int stepBefore = e.step;
     CHECK(stepBefore > 0, "did not advance with RUN unpatched");
 
@@ -148,7 +148,7 @@ static void test_run_toggle() {
     {
         EngineInputs in;
         in.clock = 0.f; in.run = 10.f; in.runConnected = true;
-        e.process(DT, in, s, p);
+        e.process(DT, in, pat, p);
     }
     CHECK(!e.running, "rising edge on RUN did not stop playback");
 
@@ -157,7 +157,7 @@ static void test_run_toggle() {
     for (int i = 0; i < int(0.5f * SR); i++) {
         EngineInputs in;
         in.clock = clk.tick(DT); in.run = 10.f; in.runConnected = true;
-        e.process(DT, in, s, p);
+        e.process(DT, in, pat, p);
     }
     CHECK(!e.running, "RUN held high toggled again — it must be edge-triggered");
     CHECK(e.step == heldStep, "stopped engine advanced from step %d to %d",
@@ -166,9 +166,9 @@ static void test_run_toggle() {
     // low, then a second rising edge resumes FROM THE HELD STEP
     {
         EngineInputs in; in.run = 0.f; in.runConnected = true;
-        e.process(DT, in, s, p);
+        e.process(DT, in, pat, p);
         in.run = 10.f;
-        e.process(DT, in, s, p);
+        e.process(DT, in, pat, p);
     }
     CHECK(e.running, "second trigger did not resume playback");
     CHECK(e.step == heldStep, "resume reset the step position");
@@ -176,13 +176,13 @@ static void test_run_toggle() {
     // stop again, then UNPATCH: must free-run rather than stay stuck
     {
         EngineInputs in; in.run = 0.f; in.runConnected = true;
-        e.process(DT, in, s, p);
+        e.process(DT, in, pat, p);
         in.run = 10.f;
-        e.process(DT, in, s, p);
+        e.process(DT, in, pat, p);
     }
     CHECK(!e.running, "could not stop again");
     int stuckStep = e.step;
-    run(e, clk, s, p, 0.5f, [](EngineOutputs, float) {});   // RUN unpatched
+    run(e, clk, pat, p, 0.5f, [](EngineOutputs, float) {});   // RUN unpatched
     CHECK(e.step != stuckStep,
           "unpatching RUN left the module stuck (stale stopped state)");
     printf("run: edge-toggles, holds position, and unpatched always runs\n");
@@ -192,8 +192,9 @@ static void test_run_toggle() {
 
 // Gate duration must equal gateLength x clock period x clockDiv.
 static void test_gate_duration() {
-    StepData s[MAX_STEPS];
-    generatePattern(0, s);
+    Pattern pat;
+    generatePattern(0, pat);
+    const StepData* s = pat.steps;
     EngineParams p;
     p.density = MAX_STEPS;       // every step fires
 
@@ -203,14 +204,14 @@ static void test_gate_duration() {
             Engine e;
             Clock clk(period);
             // let the period estimate settle, then measure one gate
-            run(e, clk, s, p, period * float(div) * 3.f, [](EngineOutputs, float) {});
+            run(e, clk, pat, p, period * float(div) * 3.f, [](EngineOutputs, float) {});
 
             // Wait for the gate to be LOW first, so we time a whole gate from
             // its rising edge rather than joining one already in progress.
             float high = 0.f;
             bool sawLow = false, measuring = false, done = false;
             int measuredStep = -1;
-            run(e, clk, s, p, period * float(div) * 4.f,
+            run(e, clk, pat, p, period * float(div) * 4.f,
                 [&](EngineOutputs o, float) {
                     if (done) return;
                     bool g = o.gate > 5.f;
@@ -224,7 +225,7 @@ static void test_gate_duration() {
                 });
 
             if (measuredStep >= 0 && done) {
-                float expect = s[measuredStep].gateLength * period * float(div);
+                float expect = pat.gateLengths[s[measuredStep].gateIndex] * period * float(div);
                 CHECK(std::fabs(high - expect) < period * 0.05f,
                       "period %.2f div %d step %d: gate %.4f s, expected %.4f s",
                       period, div, measuredStep, high, expect);
@@ -238,19 +239,19 @@ static void test_gate_duration() {
 // Averaged over many gates, because gateLength varies 0.1–0.9 per step and a
 // single gate says nothing.
 static void test_gate_scales_with_tempo() {
-    StepData s[MAX_STEPS];
-    generatePattern(11, s);
+    Pattern pat;
+    generatePattern(11, pat);
     EngineParams p;
     p.density = MAX_STEPS;       // every step fires
 
     auto averageGate = [&](float period) {
         Engine e;
         Clock clk(period);
-        run(e, clk, s, p, period * 4.f, [](EngineOutputs, float) {});   // settle
+        run(e, clk, pat, p, period * 4.f, [](EngineOutputs, float) {});   // settle
         float high = 0.f;
         int edges = 0;
         bool was = false;
-        run(e, clk, s, p, period * 48.f, [&](EngineOutputs o, float) {
+        run(e, clk, pat, p, period * 48.f, [&](EngineOutputs o, float) {
             bool g = o.gate > 5.f;
             if (g) high += DT;
             if (g && !was) edges++;
@@ -272,8 +273,9 @@ static void test_gate_scales_with_tempo() {
 // Density gating: only steps whose weight <= density may fire.
 static void test_density_gating() {
     for (int seed = 0; seed < 64; seed++) {
-        StepData s[MAX_STEPS];
-        generatePattern(seed, s);
+        Pattern pat;
+        generatePattern(seed, pat);
+        const StepData* s = pat.steps;
         for (int density : {1, 4, 8, 16}) {
             EngineParams p;
             p.density = density;
@@ -281,7 +283,7 @@ static void test_density_gating() {
             Clock clk(0.02f);
             bool fired[MAX_STEPS] = {};
             bool wasHigh = false;
-            run(e, clk, s, p, 1.f, [&](EngineOutputs o, float) {
+            run(e, clk, pat, p, 1.f, [&](EngineOutputs o, float) {
                 bool high = o.gate > 5.f;
                 if (high && !wasHigh) fired[e.step] = true;
                 wasHigh = high;
@@ -305,19 +307,19 @@ static void test_density_gating() {
 // ── velocity and pitch sample-and-hold ───────────────────────────────────────
 
 static void test_sample_and_hold() {
-    StepData s[MAX_STEPS];
-    generatePattern(0, s);
+    Pattern pat;
+    generatePattern(0, pat);
     EngineParams p;
     p.density = 4;               // most steps silent, so holding is visible
 
     Engine e;
     Clock clk(0.02f);
-    run(e, clk, s, p, 0.5f, [](EngineOutputs, float) {});   // settle
+    run(e, clk, pat, p, 0.5f, [](EngineOutputs, float) {});   // settle
 
     float lastVel = -1.f, lastPitch = -1e9f;
     bool wasHigh = false;
     int velChangesWhileSilent = 0, pitchChangesWhileSilent = 0;
-    run(e, clk, s, p, 2.f, [&](EngineOutputs o, float) {
+    run(e, clk, pat, p, 2.f, [&](EngineOutputs o, float) {
         bool high = o.gate > 5.f;
         bool onset = high && !wasHigh;
         if (!onset && lastVel >= 0.f) {
@@ -338,12 +340,12 @@ static void test_sample_and_hold() {
 
 // Velocity output must stay in 0–10 V.
 static void test_velocity_range() {
-    StepData s[MAX_STEPS];
-    generatePattern(5, s);
+    Pattern pat;
+    generatePattern(5, pat);
     EngineParams p;
     Engine e;
     Clock clk(0.02f);
-    run(e, clk, s, p, 2.f, [&](EngineOutputs o, float) {
+    run(e, clk, pat, p, 2.f, [&](EngineOutputs o, float) {
         CHECK(o.velocity >= 0.f && o.velocity <= 10.f,
               "velocity %f out of 0–10 V", o.velocity);
         CHECK(o.gate == 0.f || o.gate == 10.f, "gate %f is not 0 or 10 V", o.gate);
@@ -355,16 +357,16 @@ static void test_velocity_range() {
 
 // SLIDE at 0 must be indistinguishable from the pre-slide module.
 static void test_slide_zero_is_instant() {
-    StepData s[MAX_STEPS];
-    generatePattern(0, s);
+    Pattern pat;
+    generatePattern(0, pat);
     EngineParams p;
-    p.slide = 0.f;
+    p.slideKnob = 0.f;
     p.density = MAX_STEPS;
 
     Engine e;
     Clock clk(0.05f);
     int intermediate = 0;
-    run(e, clk, s, p, 2.f, [&](EngineOutputs o, float) {
+    run(e, clk, pat, p, 2.f, [&](EngineOutputs o, float) {
         // With no slide, every emitted pitch must be an exact quantized value.
         float semiF = o.pitch * 12.f;
         if (std::fabs(semiF - std::lround(semiF)) > EPS) intermediate++;
@@ -380,22 +382,22 @@ static void test_slide_zero_is_instant() {
 static void test_slide_reaches_target() {
     EngineParams p;
     p.density = MAX_STEPS;
-    p.slide = 1.f;               // longest glide
+    p.slideKnob = 1.f;               // longest glide
 
     int slidesChecked = 0;
     for (int seed = 0; seed < 32; seed++) {
-        StepData s[MAX_STEPS];
-        generatePattern(seed, s);
+        Pattern pat;
+        generatePattern(seed, pat);
 
         Engine e;
         Clock clk(0.2f);
-        run(e, clk, s, p, 0.6f, [](EngineOutputs, float) {});   // settle period
+        run(e, clk, pat, p, 0.6f, [](EngineOutputs, float) {});   // settle period
 
         float prevPitch = e.pitchOut(p);
         bool sliding = false;
         float from = 0.f, target = 0.f, elapsed = 0.f;
 
-        run(e, clk, s, p, 4.f, [&](EngineOutputs o, float) {
+        run(e, clk, pat, p, 4.f, [&](EngineOutputs o, float) {
             if (e.slideProgress < 1.f && !sliding) {
                 sliding = true;
                 elapsed = 0.f;
@@ -403,6 +405,7 @@ static void test_slide_reaches_target() {
                 StepData cur{};
                 cur.pitchIndex = e.heldPitchIndex;
                 cur.octaveRaw  = e.heldOctaveRaw;
+                cur.octaveJump = e.heldOctaveJump;   // a 303 octave-up counts
                 target = pitchVoltage(cur, p.quant);
             }
             if (sliding) {
@@ -436,18 +439,18 @@ static void test_slide_reaches_target() {
 
 // Longer SLIDE settings must produce longer glides.
 static void test_slide_knob_scales() {
-    StepData s[MAX_STEPS];
-    generatePattern(0, s);
+    Pattern pat;
+    generatePattern(0, pat);
 
     auto measure = [&](float amount) {
         EngineParams p;
         p.density = MAX_STEPS;
-        p.slide = amount;
+        p.slideKnob = amount;
         Engine e;
         Clock clk(0.2f);
-        run(e, clk, s, p, 0.6f, [](EngineOutputs, float) {});
+        run(e, clk, pat, p, 0.6f, [](EngineOutputs, float) {});
         float total = 0.f;
-        run(e, clk, s, p, 3.f, [&](EngineOutputs, float) {
+        run(e, clk, pat, p, 3.f, [&](EngineOutputs, float) {
             if (e.slideProgress < 1.f) total += DT;
         });
         return total;
@@ -467,20 +470,20 @@ static void test_slide_knob_scales() {
 // A slide is tempo-relative: the same knob setting glides longer at a slower
 // clock, so the feel survives a tempo change.
 static void test_slide_follows_tempo() {
-    StepData s[MAX_STEPS];
-    generatePattern(0, s);
+    Pattern pat;
+    generatePattern(0, pat);
 
     auto measure = [&](float period) {
         EngineParams p;
         p.density = MAX_STEPS;
-        p.slide = 1.f;
+        p.slideKnob = 1.f;
         Engine e;
         Clock clk(period);
-        run(e, clk, s, p, period * 4.f, [](EngineOutputs, float) {});
+        run(e, clk, pat, p, period * 4.f, [](EngineOutputs, float) {});
         float total = 0.f;
         int glides = 0;
         bool was = false;
-        run(e, clk, s, p, period * 16.f, [&](EngineOutputs, float) {
+        run(e, clk, pat, p, period * 16.f, [&](EngineOutputs, float) {
             bool now = e.slideProgress < 1.f;
             if (now) total += DT;
             if (now && !was) glides++;
@@ -496,11 +499,160 @@ static void test_slide_follows_tempo() {
     printf("slide: glide length tracks the clock (%.3f s vs %.3f s)\n", fast, slow);
 }
 
+
+// ── GATE knob (three note lengths, one scaler) ──────────────────────────────
+
+// The knob must scale gate duration proportionally, and the three lengths
+// must stay distinguishable.
+static void test_gate_knob_scales() {
+    Pattern pat; generatePattern(400, pat);      // a random-zone seed
+    auto averageGate = [&](float gateKnob) {
+        EngineParams p;
+        p.density = MAX_STEPS;
+        p.gate = gateKnob;
+        Engine e;
+        Clock clk(0.2f);
+        run(e, clk, pat, p, 0.8f, [](EngineOutputs, float) {});
+        float high = 0.f; int edges = 0; bool was = false;
+        run(e, clk, pat, p, 0.2f * 40.f, [&](EngineOutputs o, float) {
+            bool g = o.gate > 5.f;
+            if (g) high += DT;
+            if (g && !was) edges++;
+            was = g;
+        });
+        return edges ? high / float(edges) : 0.f;
+    };
+    float half = averageGate(0.5f), full = averageGate(1.f);
+    CHECK(half > 0.f && full > 0.f, "no gates measured");
+    float ratio = full / half;
+    CHECK(ratio > 1.7f && ratio < 2.3f,
+          "GATE 100%% vs 50%% scaled by %.2fx, expected ~2x", ratio);
+
+    // the pattern's three lengths are ordered and distinct
+    CHECK(pat.gateLengths[0] < pat.gateLengths[1]
+       && pat.gateLengths[1] < pat.gateLengths[2],
+          "the three note lengths are not short < mid < long");
+    CHECK(pat.gateLengths[2] - pat.gateLengths[0] > 0.2f,
+          "the three note lengths are too close to tell apart");
+    printf("gate knob: scales all three lengths together (%.2fx for 2x knob)\n", ratio);
+}
+
+// Past 100% the LONGER of the three lengths runs into the next step. The
+// short one does not, and should not: 0.12-0.30 of a step doubled is still
+// well under a step. So GATE morphs a pattern from staccato toward partly
+// legato rather than flipping everything to tied at once.
+static void test_gate_knob_ties() {
+    Pattern pat; generatePattern(400, pat);
+    auto gapCount = [&](float gateKnob) {
+        EngineParams p;
+        p.density = MAX_STEPS;        // every step fires, so any gap is a real one
+        p.gate = gateKnob;
+        Engine e;
+        Clock clk(0.2f);
+        run(e, clk, pat, p, 0.8f, [](EngineOutputs, float) {});
+        int falls = 0; bool was = true;
+        run(e, clk, pat, p, 0.2f * 32.f, [&](EngineOutputs o, float) {
+            bool g = o.gate > 5.f;
+            if (was && !g) falls++;
+            was = g;
+        });
+        return falls;
+    };
+    int tiny   = gapCount(0.3f);
+    int normal = gapCount(1.f);
+    int wide   = gapCount(2.f);
+    CHECK(normal > 8, "at GATE 100%% the gate barely falls — %d gaps", normal);
+    CHECK(wide < normal,
+          "GATE 200%% did not tie anything (%d gaps vs %d at 100%%)", wide, normal);
+    CHECK(tiny >= normal,
+          "GATE 30%% produced fewer gaps (%d) than 100%% (%d)", tiny, normal);
+    // the long length must actually cross a whole step at 200%
+    CHECK(pat.gateLengths[2] * 2.f > 1.f,
+          "even the longest note cannot tie at GATE 200%%");
+    CHECK(pat.gateLengths[0] * 2.f < 1.f,
+          "the shortest note ties at GATE 200%% — the three lengths are too close");
+    printf("gate knob: %d gaps at 30%%, %d at 100%%, %d at 200%% — long notes tie, "
+           "short ones stay staccato\n", tiny, normal, wide);
+}
+
+// A 303 slide IS a tie: a slid step must not drop its gate before the next
+// note starts, even at a short GATE setting.
+static void test_slide_ties_the_gate() {
+    Pattern pat; generatePattern(0, pat);        // a bass seed — ties are common
+    EngineParams p;
+    p.density = MAX_STEPS;
+    p.gate = 0.3f;                               // deliberately short notes
+    p.slideKnob = 1.f;
+
+    Engine e;
+    Clock clk(0.2f);
+    run(e, clk, pat, p, 0.8f, [](EngineOutputs, float) {});
+
+    // walk step by step; whenever the step that just fired was flagged, the
+    // gate must still be high when the next step arrives
+    int tiedChecked = 0, brokenTies = 0;
+    int lastStep = e.step;
+    bool pendingTie = false;
+    run(e, clk, pat, p, 0.2f * 40.f, [&](EngineOutputs o, float) {
+        if (e.step != lastStep) {
+            if (pendingTie) {
+                if (o.gate <= 5.f) brokenTies++;
+                tiedChecked++;
+            }
+            pendingTie = pat.steps[e.step].slide;
+            lastStep = e.step;
+        }
+    });
+    CHECK(tiedChecked > 5, "only %d ties observed — is the bass zone sliding?",
+          tiedChecked);
+    CHECK(brokenTies == 0,
+          "%d of %d slides dropped their gate before the next note — a 303 slide "
+          "is a tie, not a gap", brokenTies, tiedChecked);
+
+    // and with the attenuator CCW there are no ties at all
+    EngineParams off = p;
+    off.slideKnob = 0.f;
+    Engine e2; Clock clk2(0.2f);
+    run(e2, clk2, pat, off, 0.8f, [](EngineOutputs, float) {});
+    int falls = 0; bool was = true;
+    run(e2, clk2, pat, off, 0.2f * 32.f, [&](EngineOutputs o, float) {
+        bool g = o.gate > 5.f;
+        if (was && !g) falls++;
+        was = g;
+    });
+    CHECK(falls > 8, "SLIDE fully CCW still tied notes together (%d gaps)", falls);
+    printf("slide: %d ties all held the gate through to the next note; "
+           "CCW removes them\n", tiedChecked);
+}
+
+// ACCENT must reach the velocity output.
+static void test_accent_reaches_output() {
+    Pattern pat; generatePattern(400, pat);
+    auto spread = [&](float accent) {
+        EngineParams p;
+        p.density = MAX_STEPS;
+        p.accent = accent;
+        Engine e;
+        Clock clk(0.1f);
+        run(e, clk, pat, p, 0.4f, [](EngineOutputs, float) {});
+        float lo = 1e9f, hi = -1e9f;
+        run(e, clk, pat, p, 0.1f * 40.f, [&](EngineOutputs o, float) {
+            if (o.velocity < lo) lo = o.velocity;
+            if (o.velocity > hi) hi = o.velocity;
+        });
+        return hi - lo;
+    };
+    float flat = spread(0.f), full = spread(1.f);
+    CHECK(flat < 0.01f, "ACCENT 0 did not flatten velocity (spread %.3f V)", flat);
+    CHECK(full > 3.f, "ACCENT 100 gave only %.2f V of contrast", full);
+    printf("accent: 0 flattens velocity, 100 gives %.1f V of contrast\n", full);
+}
+
 // ── reseed request (Task 9, engine half) ─────────────────────────────────────
 
 static void test_reseed_edge() {
-    StepData s[MAX_STEPS];
-    generatePattern(0, s);
+    Pattern pat;
+    generatePattern(0, pat);
     EngineParams p;
     Engine e;
 
@@ -508,21 +660,21 @@ static void test_reseed_edge() {
     in.reseedConnected = true;
 
     in.reseed = 0.f;
-    e.process(DT, in, s, p);
+    e.process(DT, in, pat, p);
     CHECK(!e.reseedRequested, "reseed fired with no trigger");
 
     in.reseed = 10.f;
-    e.process(DT, in, s, p);
+    e.process(DT, in, pat, p);
     CHECK(e.reseedRequested, "rising edge did not request a reseed");
 
     e.reseedRequested = false;
-    for (int i = 0; i < 100; i++) e.process(DT, in, s, p);   // held high
+    for (int i = 0; i < 100; i++) e.process(DT, in, pat, p);   // held high
     CHECK(!e.reseedRequested, "held-high reseed retriggered — must be edge-only");
 
     in.reseed = 0.f;
-    e.process(DT, in, s, p);
+    e.process(DT, in, pat, p);
     in.reseed = 10.f;
-    e.process(DT, in, s, p);
+    e.process(DT, in, pat, p);
     CHECK(e.reseedRequested, "second rising edge did not request a reseed");
 
     // unpatched must never request
@@ -531,23 +683,23 @@ static void test_reseed_edge() {
     EngineInputs un;
     un.reseed = 10.f;
     un.reseedConnected = false;
-    for (int i = 0; i < 100; i++) e2.process(DT, un, s, p);
+    for (int i = 0; i < 100; i++) e2.process(DT, un, pat, p);
     CHECK(!e2.reseedRequested, "unpatched RESEED requested a reseed");
     printf("reseed: edge-triggered only, ignored when unpatched\n");
 }
 
 // The engine itself must never invent randomness: same inputs, same outputs.
 static void test_engine_determinism() {
-    StepData s[MAX_STEPS];
-    generatePattern(21, s);
+    Pattern pat;
+    generatePattern(21, pat);
     EngineParams p;
-    p.slide = 0.6f;
+    p.slideKnob = 0.6f;
 
     auto capture = [&](float* buf, int n) {
         Engine e;
         Clock clk(0.05f);
         int i = 0;
-        run(e, clk, s, p, float(n) * DT, [&](EngineOutputs o, float) {
+        run(e, clk, pat, p, float(n) * DT, [&](EngineOutputs o, float) {
             if (i < n) buf[i++] = o.pitch * 1000.f + o.gate + o.velocity;
         });
     };
@@ -574,6 +726,10 @@ int main() {
     test_slide_reaches_target();
     test_slide_knob_scales();
     test_slide_follows_tempo();
+    test_gate_knob_scales();
+    test_gate_knob_ties();
+    test_slide_ties_the_gate();
+    test_accent_reaches_output();
     test_reseed_edge();
     test_engine_determinism();
 

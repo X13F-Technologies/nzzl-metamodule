@@ -16,14 +16,39 @@ inline int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+// Three note lengths and three velocity layers per pattern, not a continuous
+// value per step — the GATE and ACCENT knobs then scale a small, audible set
+// rather than smearing sixteen unrelated numbers.
+constexpr int NUM_GATE_LENGTHS = 3;
+constexpr int NUM_VEL_LAYERS   = 3;   // 0 = off, 1 = low, 2 = high (accent)
+
 struct StepData {
     int   weight;       // permutation of 1–16: density N activates exactly N steps
     int   pitchIndex;   // raw index 0–15, mapped into scale at playback
-    float gateLength;   // fraction of clock period (0.1–0.9)
-    float velocity;     // 0.0–1.0
-    bool  slide;
-    float octaveRaw;    // 0.0–1.0, scaled by octave range at playback
+    int   gateIndex;    // 0–2: which of the pattern's three note lengths
+    int   velLayer;     // 0–2: off / low / high, scaled by ACCENT at playback
+    bool  slide;        // 303-style tie: gate holds through to the next note
+    int   octaveJump;   // >= 0 = explicit octave offset; -1 = use octaveRaw
+    float octaveRaw;    // 0.0–1.0, spread across octave range at playback
 };
+
+// One pattern: the sixteen steps plus the three note lengths they index into.
+struct Pattern {
+    StepData steps[MAX_STEPS];
+    float    gateLengths[NUM_GATE_LENGTHS];   // fractions of a clock period
+};
+
+// Velocity for a layer, with ACCENT (0–100) scaling the contrast between
+// layers. At 0 every note is the same mid level; at 100 the layers are fully
+// apart. This is what makes a 303 line breathe.
+constexpr float VEL_LAYER[NUM_VEL_LAYERS] = { 0.22f, 0.55f, 1.0f };
+constexpr float VEL_FLAT = 0.55f;
+
+inline float velocityFor(int layer, float accent01) {
+    const int l = clampi(layer, 0, NUM_VEL_LAYERS - 1);
+    const float a = clampf(accent01, 0.f, 1.f);
+    return VEL_FLAT + (VEL_LAYER[l] - VEL_FLAT) * a;
+}
 
 // splitmix32 — decorrelates sequential seed indices before they enter
 // xorshift, so adjacent seeds produce unrelated patterns.
@@ -48,6 +73,9 @@ enum AttrSalt : uint32_t {
     SALT_SLIDE    = 0x534C4944,
     SALT_OCTAVE   = 0x4F435456,
     SALT_STYLE    = 0x5354594C,   // Task 8 — new attribute, new salt
+    SALT_GATELEN  = 0x474C454E,   // the pattern's three note lengths
+    SALT_ACCENT   = 0x41434354,   // per-step velocity layer
+    SALT_OCTJUMP  = 0x4F4A4D50,   // per-step octave jump
 };
 
 inline Xorshift32 attrRng(int seedIndex, uint32_t salt) {
@@ -56,7 +84,9 @@ inline Xorshift32 attrRng(int seedIndex, uint32_t salt) {
 
 // The base pattern, before any style shaping. Exposed so tests can prove
 // the STYLE_RANDOM zone is bit-identical to it.
-inline void generateBasePattern(int seedIndex, StepData steps[MAX_STEPS]) {
+inline void generateBasePattern(int seedIndex, Pattern& pat) {
+    StepData* steps = pat.steps;
+
     // Weights: Fisher-Yates shuffle of 1..16 so density is exactly linear
     {
         auto rng = attrRng(seedIndex, SALT_WEIGHT);
@@ -78,15 +108,23 @@ inline void generateBasePattern(int seedIndex, StepData steps[MAX_STEPS]) {
         for (int i = 0; i < MAX_STEPS; i++)
             steps[i].pitchIndex = rng.nextInt(16);
     }
+    // The pattern's three note lengths, short to long, and which one each
+    // step uses.
+    {
+        auto rng = attrRng(seedIndex, SALT_GATELEN);
+        pat.gateLengths[0] = 0.12f + rng.nextFloat() * 0.18f;   // 0.12–0.30
+        pat.gateLengths[1] = 0.35f + rng.nextFloat() * 0.25f;   // 0.35–0.60
+        pat.gateLengths[2] = 0.65f + rng.nextFloat() * 0.30f;   // 0.65–0.95
+    }
     {
         auto rng = attrRng(seedIndex, SALT_GATE);
         for (int i = 0; i < MAX_STEPS; i++)
-            steps[i].gateLength = 0.1f + rng.nextFloat() * 0.8f;
+            steps[i].gateIndex = rng.nextInt(NUM_GATE_LENGTHS);
     }
     {
-        auto rng = attrRng(seedIndex, SALT_VELOCITY);
+        auto rng = attrRng(seedIndex, SALT_ACCENT);
         for (int i = 0; i < MAX_STEPS; i++)
-            steps[i].velocity = rng.nextFloat();
+            steps[i].velLayer = rng.nextInt(NUM_VEL_LAYERS);
     }
     {
         auto rng = attrRng(seedIndex, SALT_SLIDE);
@@ -98,34 +136,65 @@ inline void generateBasePattern(int seedIndex, StepData steps[MAX_STEPS]) {
         for (int i = 0; i < MAX_STEPS; i++)
             steps[i].octaveRaw = rng.nextFloat();
     }
+    {
+        auto rng = attrRng(seedIndex, SALT_OCTJUMP);
+        for (int i = 0; i < MAX_STEPS; i++) {
+            (void)rng.nextFloat();          // reserved; styles overwrite this
+            steps[i].octaveJump = -1;       // default: spread across the range
+        }
+    }
 }
 
-
-// ── Style zones (Task 8) ─────────────────────────────────────────────────────
+// ── Style zones ─────────────────────────────────────────────────────────────
 //
-// The GROUP knob divides the 1024 seeds into three zones with different
-// musical character. The style layer is applied AFTER the base pattern, from
-// its own salted stream, and STYLE_RANDOM is a deliberate no-op — so every
-// existing attribute stream is untouched and the middle zone is bit-identical
-// to the pre-Task-8 module. That is what invariant 2 in docs/DESIGN.md
-// requires: new needs get new salts, existing draws never change.
+// The GROUP knob divides the 1024 seeds into three zones, per the handoff
+// spec: 1–10 BASS, 11–21 RAND, 22–32 ARP. Inside the ARP zone the SUBGROUP
+// knob picks the direction: 1–8 up, 9–16 down, 17–24 up-down, 25–32 down-up.
+//
+// The style layer runs AFTER the base pattern, from its own salted stream,
+// and STYLE_RANDOM is a deliberate no-op — new needs get new salts, existing
+// draws never change, and the middle zone stays exactly what the unshaped
+// generator produced.
 
 enum Style {
-    STYLE_BASS   = 0,   // GROUP 1–10:  root/fifth heavy, notes on strong beats
-    STYLE_RANDOM = 1,   // GROUP 11–22: the untouched base pattern
-    STYLE_ARP    = 2,   // GROUP 23–32: stepwise runs, even gates
+    STYLE_BASS   = 0,   // GROUP 1–10:  303-style acid lines
+    STYLE_RANDOM = 1,   // GROUP 11–21: the untouched base pattern
+    STYLE_ARP    = 2,   // GROUP 22–32: ordered runs, direction from SUBGROUP
+};
+
+enum ArpMode {
+    ARP_UP = 0, ARP_DOWN = 1, ARP_UPDOWN = 2, ARP_DOWNUP = 3,
 };
 
 constexpr int SEEDS_PER_GROUP = 32;
-constexpr int NUM_GROUPS       = 32;
-constexpr int NUM_SEEDS        = SEEDS_PER_GROUP * NUM_GROUPS;   // 1024
+constexpr int NUM_GROUPS      = 32;
+constexpr int NUM_SEEDS       = SEEDS_PER_GROUP * NUM_GROUPS;   // 1024
 
 inline int groupForSeed(int seedIndex) {
     return seedIndex / SEEDS_PER_GROUP + 1;     // 1..32
 }
+inline int subgroupForSeed(int seedIndex) {
+    return seedIndex % SEEDS_PER_GROUP + 1;     // 1..32
+}
 
-// Knobs <-> seed index. RESEED (Task 9) needs the reverse direction so it can
-// drive the knobs to match the pattern it just picked — if the knobs stopped
+inline Style styleForSeed(int seedIndex) {
+    const int g = groupForSeed(seedIndex);
+    if (g <= 10) return STYLE_BASS;
+    if (g <= 21) return STYLE_RANDOM;
+    return STYLE_ARP;
+}
+
+// Only meaningful in the ARP zone.
+inline ArpMode arpModeForSeed(int seedIndex) {
+    const int sg = subgroupForSeed(seedIndex);          // 1..32
+    if (sg <= 8)  return ARP_UP;
+    if (sg <= 16) return ARP_DOWN;
+    if (sg <= 24) return ARP_UPDOWN;
+    return ARP_DOWNUP;
+}
+
+// Knobs <-> seed index. RESEED needs the reverse direction so it can drive
+// the knobs to match the pattern it just picked — if the knobs stopped
 // agreeing with what is playing, the seed would no longer be reproducible by
 // hand, which is the whole promise of the module.
 inline int seedIndexFor(int group, int subgroup) {
@@ -140,99 +209,156 @@ inline void seedKnobsFor(int seedIndex, int& group, int& subgroup) {
     subgroup  = seedIndex % SEEDS_PER_GROUP + 1;
 }
 
-inline Style styleForSeed(int seedIndex) {
-    const int g = groupForSeed(seedIndex);
-    if (g <= 10) return STYLE_BASS;
-    if (g <= 22) return STYLE_RANDOM;
-    return STYLE_ARP;
-}
-
-inline const char* styleName(Style s) {
-    switch (s) {
+inline const char* styleName(int seedIndex) {
+    switch (styleForSeed(seedIndex)) {
         case STYLE_BASS: return "BASS";
-        case STYLE_ARP:  return "ARP";
-        default:         return "RAND";
+        case STYLE_ARP:
+            switch (arpModeForSeed(seedIndex)) {
+                case ARP_UP:     return "ARP\u2191";
+                case ARP_DOWN:   return "ARP\u2193";
+                case ARP_UPDOWN: return "ARP\u2195";
+                default:         return "ARP\u2194";
+            }
+        default: return "RAND";
     }
 }
 
-// Strong-to-weak beat order in a 16-step bar: beats 1 and 3 first, then 2
-// and 4, then the off-beats, then the odd sixteenths.
-constexpr int BEAT_PRIORITY[MAX_STEPS] = {
-    0, 8, 4, 12, 2, 6, 10, 14, 1, 3, 5, 7, 9, 11, 13, 15
-};
+// ── 303 shaping constants ───────────────────────────────────────────────────
+//
+// A TB-303 line is not "notes on beats 1 and 3". It is runs of sixteenths
+// broken by rests, with ties (slides) welding notes together, the root
+// hammered far more than anything else, and the odd octave jump. The handoff
+// doc's "cluster on beats 1 and 3, sparse off-beat" describes a dub bassline;
+// the module wants acid, so this is what got built instead.
 
-// pitchIndex values that land on the root or the fifth of a 7-note scale
-// (degreeForIndex(idx, 7) == 0 or 4). Used to give basslines their anchor.
-constexpr int BASS_ANCHOR[5] = { 0, 1, 2, 10, 11 };
+constexpr float BASS_DOWNBEAT_CHANCE = 0.85f;  // how often step 1 leads the pattern
+constexpr int   BASS_RUNS            = 4;      // runs of consecutive 16ths per seed
+constexpr int   BASS_RUN_MIN         = 2;
+constexpr int   BASS_RUN_SPAN        = 3;      // run length = MIN .. MIN+SPAN-1
+constexpr float BASS_SLIDE_CHANCE    = 0.32f;  // ties are common in acid
+constexpr float BASS_ACCENT_CHANCE   = 0.28f;  // accented (high-layer) notes
+constexpr float BASS_OCTAVE_UP       = 0.18f;  // the 303's octave-up button
 
-constexpr float BASS_BEAT_BIAS   = 0.75f;   // chance a low weight is pulled onto a strong beat
-constexpr float BASS_PITCH_BIAS  = 0.55f;   // chance a step snaps to root/fifth
-constexpr int   BASS_BIASED_BEATS = 8;      // how many of the lowest weights get placed
+// pitchIndex values whose 7-note degree is 0, 2, 3, 4, 6 — root, third,
+// fourth, fifth, seventh. The vocabulary an acid line actually uses.
+constexpr int ACID_ROOT   = 0;    // degree 0
+constexpr int ACID_THIRD  = 5;    // degree 2
+constexpr int ACID_FOURTH = 7;    // degree 3
+constexpr int ACID_FIFTH  = 10;   // degree 4
+constexpr int ACID_SEVENTH= 14;   // degree 6
 
-inline void applyStyle(int seedIndex, StepData steps[MAX_STEPS]) {
+// Cumulative weights: root 55%, fifth 15%, third 12%, seventh 10%, fourth 8%.
+// The root dominance is what gives an acid line its hypnotic repetition.
+inline int acidPitch(float r) {
+    if (r < 0.55f) return ACID_ROOT;
+    if (r < 0.70f) return ACID_FIFTH;
+    if (r < 0.82f) return ACID_THIRD;
+    if (r < 0.92f) return ACID_SEVENTH;
+    return ACID_FOURTH;
+}
+
+inline void applyStyle(int seedIndex, Pattern& pat) {
     const Style style = styleForSeed(seedIndex);
     if (style == STYLE_RANDOM)
         return;                              // no-op, and no stream consumed
 
+    StepData* steps = pat.steps;
     auto rng = attrRng(seedIndex, SALT_STYLE);
 
     if (style == STYLE_BASS) {
-        // Rhythm: pull the lowest weights onto the strongest beats, so the
-        // first steps to appear as DENSITY rises are the ones on the beat.
-        // Swapping two positions' weights keeps the 1..16 permutation intact,
-        // which is what makes DENSITY exact (invariant 3).
-        for (int k = 0; k < BASS_BIASED_BEATS; k++) {
-            if (rng.nextFloat() >= BASS_BEAT_BIAS)
-                continue;
-            const int want = k + 1;
-            int at = -1;
-            for (int i = 0; i < MAX_STEPS; i++)
-                if (steps[i].weight == want) { at = i; break; }
-            const int dst = BEAT_PRIORITY[k];
-            if (at >= 0 && at != dst) {
-                const int tmp = steps[at].weight;
-                steps[at].weight  = steps[dst].weight;
-                steps[dst].weight = tmp;
+        // ── Rhythm: runs of sixteenths, per seed ────────────────────────────
+        // Build a priority order of step positions, then lay weights 1..16
+        // along it. Because the run positions come from the seed, two bass
+        // seeds do NOT share a rhythm — which a fixed beat-priority table
+        // would have forced on all 320 of them.
+        int  pri[MAX_STEPS];
+        bool used[MAX_STEPS] = {};
+        int  n = 0;
+
+        if (rng.nextFloat() < BASS_DOWNBEAT_CHANCE) {
+            pri[n++] = 0; used[0] = true;    // acid lines usually land on 1
+        }
+        for (int r = 0; r < BASS_RUNS && n < MAX_STEPS; r++) {
+            const int start = rng.nextInt(MAX_STEPS);
+            const int len   = BASS_RUN_MIN + rng.nextInt(BASS_RUN_SPAN);
+            for (int k = 0; k < len && n < MAX_STEPS; k++) {
+                const int idx = (start + k) % MAX_STEPS;
+                if (!used[idx]) { pri[n++] = idx; used[idx] = true; }
             }
         }
-        // Pitch: anchor a good share of steps on the root or the fifth.
-        for (int i = 0; i < MAX_STEPS; i++) {
-            if (rng.nextFloat() < BASS_PITCH_BIAS)
-                steps[i].pitchIndex = BASS_ANCHOR[rng.nextInt(5)];
-        }
-        // Gate: punchier. Compresses 0.1–0.9 into 0.1–0.58.
+        for (int i = 0; i < MAX_STEPS && n < MAX_STEPS; i++)
+            if (!used[i]) { pri[n++] = i; used[i] = true; }
+
+        // Laying 1..16 along a permutation of positions IS a permutation, so
+        // DENSITY stays exactly linear (invariant 3).
+        for (int k = 0; k < MAX_STEPS; k++)
+            steps[pri[k]].weight = k + 1;
+
+        // ── Pitch: root-dominated acid vocabulary ───────────────────────────
         for (int i = 0; i < MAX_STEPS; i++)
-            steps[i].gateLength = 0.1f + (steps[i].gateLength - 0.1f) * 0.6f;
+            steps[i].pitchIndex = acidPitch(rng.nextFloat());
+
+        // ── Octave: mostly home, occasional octave-up ───────────────────────
+        for (int i = 0; i < MAX_STEPS; i++)
+            steps[i].octaveJump = (rng.nextFloat() < BASS_OCTAVE_UP) ? 1 : 0;
+
+        // ── Ties and accents ────────────────────────────────────────────────
+        for (int i = 0; i < MAX_STEPS; i++)
+            steps[i].slide = rng.nextFloat() < BASS_SLIDE_CHANCE;
+        for (int i = 0; i < MAX_STEPS; i++) {
+            const float r = rng.nextFloat();
+            steps[i].velLayer = (r < BASS_ACCENT_CHANCE) ? 2 : (r < 0.80f ? 1 : 0);
+        }
+        // Gates: short and medium dominate — staccato, with ties doing the
+        // work that long gates would otherwise do.
+        for (int i = 0; i < MAX_STEPS; i++)
+            steps[i].gateIndex = rng.nextFloat() < 0.65f ? 0 : 1;
         return;
     }
 
-    // STYLE_ARP — sort each group of four steps into an ascending or
-    // descending run, so the pattern moves stepwise instead of leaping.
-    for (int block = 0; block < MAX_STEPS; block += 4) {
-        const bool ascending = rng.nextFloat() < 0.6f;
-        for (int a = 0; a < 4; a++) {
-            for (int b = a + 1; b < 4; b++) {
-                const int ia = block + a, ib = block + b;
-                const bool swapNeeded = ascending
-                    ? steps[ia].pitchIndex > steps[ib].pitchIndex
-                    : steps[ia].pitchIndex < steps[ib].pitchIndex;
-                if (swapNeeded) {
-                    const int tmp = steps[ia].pitchIndex;
-                    steps[ia].pitchIndex = steps[ib].pitchIndex;
-                    steps[ib].pitchIndex = tmp;
-                }
+    // ── STYLE_ARP ───────────────────────────────────────────────────────────
+    // Direction comes from the SUBGROUP knob, per the spec. Sort the whole
+    // sixteen-step pitch set, then read it out in the chosen shape.
+    int sorted[MAX_STEPS];
+    for (int i = 0; i < MAX_STEPS; i++) sorted[i] = steps[i].pitchIndex;
+    for (int a = 0; a < MAX_STEPS; a++)
+        for (int b = a + 1; b < MAX_STEPS; b++)
+            if (sorted[b] < sorted[a]) {
+                const int t = sorted[a]; sorted[a] = sorted[b]; sorted[b] = t;
+            }
+
+    const ArpMode mode = arpModeForSeed(seedIndex);
+    for (int i = 0; i < MAX_STEPS; i++) {
+        int pick;
+        switch (mode) {
+            case ARP_UP:   pick = i; break;
+            case ARP_DOWN: pick = MAX_STEPS - 1 - i; break;
+            case ARP_UPDOWN: {
+                // up over 8, then back down over 8
+                const int half = MAX_STEPS / 2;
+                pick = (i < half) ? i * 2 : (MAX_STEPS - 1) - (i - half) * 2;
+                break;
+            }
+            default: {  // ARP_DOWNUP
+                const int half = MAX_STEPS / 2;
+                pick = (i < half) ? (MAX_STEPS - 1) - i * 2 : (i - half) * 2;
+                break;
             }
         }
+        steps[i].pitchIndex = sorted[clampi(pick, 0, MAX_STEPS - 1)];
     }
-    // Gate: even and mid-length, so runs read as a line rather than as stabs.
-    // Compresses 0.1–0.9 into 0.25–0.49.
-    for (int i = 0; i < MAX_STEPS; i++)
-        steps[i].gateLength = 0.25f + (steps[i].gateLength - 0.1f) * 0.3f;
+    // Even subdivisions and consistent gates — the arp feel.
+    for (int i = 0; i < MAX_STEPS; i++) {
+        steps[i].gateIndex  = 1;                    // one length for all
+        steps[i].slide      = false;                // arps do not glide
+        steps[i].octaveJump = -1;                   // spread across the range
+        steps[i].velLayer   = rng.nextFloat() < 0.25f ? 2 : 1;
+    }
 }
 
-inline void generatePattern(int seedIndex, StepData steps[MAX_STEPS]) {
-    generateBasePattern(seedIndex, steps);
-    applyStyle(seedIndex, steps);
+inline void generatePattern(int seedIndex, Pattern& pat) {
+    generateBasePattern(seedIndex, pat);
+    applyStyle(seedIndex, pat);
 }
 
 } // namespace nzzl

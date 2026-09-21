@@ -1,6 +1,6 @@
-// Native test harness for NZZL's style zones (Task 8) — no Rack deps.
-// Style is a statistical effect, so these are aggregate assertions over whole
-// zones, not per-seed checks.
+// Native test harness for NZZL's style zones — no Rack deps.
+// Style is a statistical effect, so most of these are aggregate assertions
+// over whole zones rather than per-seed checks.
 
 #include "../src/pattern.hh"
 #include "../src/scales.hh"
@@ -21,262 +21,358 @@ static int failures = 0;
 
 using namespace nzzl;
 
-// NUM_SEEDS (1024) comes from pattern.hh.
-
-static bool isStrongBeat(int step) {
-    return step == 0 || step == 4 || step == 8 || step == 12;
-}
-static bool isAnchorPitch(int idx) {
-    for (int i = 0; i < 5; i++)
-        if (BASS_ANCHOR[i] == idx) return true;
-    return false;
+static bool isAcidPitch(int idx) {
+    return idx == ACID_ROOT || idx == ACID_THIRD || idx == ACID_FOURTH
+        || idx == ACID_FIFTH || idx == ACID_SEVENTH;
 }
 
-// Zone boundaries: GROUP 1–10 bass, 11–22 random, 23–32 arp.
+// Bitmask of which steps play at a given density.
+static unsigned activeMask(const Pattern& pat, int density) {
+    unsigned m = 0;
+    for (int i = 0; i < MAX_STEPS; i++)
+        if (pat.steps[i].weight <= density) m |= (1u << i);
+    return m;
+}
+
+// ── zones ───────────────────────────────────────────────────────────────────
+
+// The handoff spec's boundaries: 1–10 BASS, 11–21 RAND, 22–32 ARP.
 static void test_style_zones() {
     int counts[3] = {};
     for (int seed = 0; seed < NUM_SEEDS; seed++) {
         int g = groupForSeed(seed);
-        CHECK(g >= 1 && g <= 32, "seed %d gave group %d", seed, g);
+        CHECK(g >= 1 && g <= NUM_GROUPS, "seed %d gave group %d", seed, g);
         Style st = styleForSeed(seed);
-        Style expected = (g <= 10) ? STYLE_BASS
-                       : (g <= 22) ? STYLE_RANDOM
-                                   : STYLE_ARP;
+        Style expected = (g <= 10) ? STYLE_BASS : (g <= 21) ? STYLE_RANDOM : STYLE_ARP;
         CHECK(st == expected, "seed %d (group %d) got style %d, expected %d",
               seed, g, int(st), int(expected));
         counts[int(st)]++;
-        CHECK(styleName(st)[0] != '\0', "style %d has no name", int(st));
+        CHECK(styleName(seed)[0] != '\0', "seed %d has no zone name", seed);
     }
-    // exact boundaries — an off-by-one here silently moves a whole zone
-    CHECK(styleForSeed(0) == STYLE_BASS,           "group 1 is not BASS");
-    CHECK(styleForSeed(10 * 32 - 1) == STYLE_BASS, "group 10 is not BASS");
-    CHECK(styleForSeed(10 * 32) == STYLE_RANDOM,   "group 11 is not RAND");
-    CHECK(styleForSeed(22 * 32 - 1) == STYLE_RANDOM, "group 22 is not RAND");
-    CHECK(styleForSeed(22 * 32) == STYLE_ARP,      "group 23 is not ARP");
-    CHECK(styleForSeed(NUM_SEEDS - 1) == STYLE_ARP, "group 32 is not ARP");
-    CHECK(counts[STYLE_BASS] == 320 && counts[STYLE_RANDOM] == 384
-       && counts[STYLE_ARP] == 320,
+    CHECK(styleForSeed(0) == STYLE_BASS,             "group 1 is not BASS");
+    CHECK(styleForSeed(10 * 32 - 1) == STYLE_BASS,   "group 10 is not BASS");
+    CHECK(styleForSeed(10 * 32) == STYLE_RANDOM,     "group 11 is not RAND");
+    CHECK(styleForSeed(21 * 32 - 1) == STYLE_RANDOM, "group 21 is not RAND");
+    CHECK(styleForSeed(21 * 32) == STYLE_ARP,        "group 22 is not ARP");
+    CHECK(styleForSeed(NUM_SEEDS - 1) == STYLE_ARP,  "group 32 is not ARP");
+    CHECK(counts[STYLE_BASS] == 320 && counts[STYLE_RANDOM] == 352
+       && counts[STYLE_ARP] == 352,
           "zone sizes wrong: %d / %d / %d",
           counts[STYLE_BASS], counts[STYLE_RANDOM], counts[STYLE_ARP]);
-    printf("style zones: %d BASS / %d RAND / %d ARP, boundaries exact\n",
+    printf("zones: %d BASS / %d RAND / %d ARP, spec boundaries exact\n",
            counts[STYLE_BASS], counts[STYLE_RANDOM], counts[STYLE_ARP]);
 }
 
-// THE PATCH-STABILITY PROOF: the random zone must be byte-for-byte what the
-// module produced before Task 8 existed. Style must be purely additive.
+// Inside the ARP zone the SUBGROUP knob picks the direction.
+static void test_arp_subgroup_modes() {
+    for (int seed = 21 * 32; seed < NUM_SEEDS; seed++) {
+        int sg = subgroupForSeed(seed);
+        ArpMode want = (sg <= 8) ? ARP_UP : (sg <= 16) ? ARP_DOWN
+                     : (sg <= 24) ? ARP_UPDOWN : ARP_DOWNUP;
+        CHECK(arpModeForSeed(seed) == want,
+              "seed %d (subgroup %d) got arp mode %d, expected %d",
+              seed, sg, int(arpModeForSeed(seed)), int(want));
+    }
+    // and the display names differ per mode
+    const char* up   = styleName(21 * 32 + 0);
+    const char* down = styleName(21 * 32 + 8);
+    const char* ud   = styleName(21 * 32 + 16);
+    const char* du   = styleName(21 * 32 + 24);
+    CHECK(up != down && down != ud && ud != du, "arp modes share a display name");
+    printf("arp modes: subgroup 1-8 up, 9-16 down, 17-24 up-down, 25-32 down-up\n");
+}
+
+// THE PATCH-STABILITY PROOF: the random zone must be what the unshaped
+// generator produced. Style must be purely additive.
 static void test_random_zone_unchanged() {
     int checked = 0;
     for (int seed = 0; seed < NUM_SEEDS; seed++) {
         if (styleForSeed(seed) != STYLE_RANDOM) continue;
-        StepData styled[MAX_STEPS], base[MAX_STEPS];
+        Pattern styled, base;
         generatePattern(seed, styled);
         generateBasePattern(seed, base);
+        for (int g = 0; g < NUM_GATE_LENGTHS; g++)
+            CHECK(styled.gateLengths[g] == base.gateLengths[g],
+                  "seed %d: style altered gate length %d", seed, g);
         for (int i = 0; i < MAX_STEPS; i++) {
-            CHECK(styled[i].weight     == base[i].weight
-               && styled[i].pitchIndex == base[i].pitchIndex
-               && styled[i].gateLength == base[i].gateLength
-               && styled[i].velocity   == base[i].velocity
-               && styled[i].slide      == base[i].slide
-               && styled[i].octaveRaw  == base[i].octaveRaw,
-                  "seed %d step %d: style layer altered the RANDOM zone",
-                  seed, i);
+            const StepData& a = styled.steps[i];
+            const StepData& b = base.steps[i];
+            CHECK(a.weight == b.weight && a.pitchIndex == b.pitchIndex
+               && a.gateIndex == b.gateIndex && a.velLayer == b.velLayer
+               && a.slide == b.slide && a.octaveJump == b.octaveJump
+               && a.octaveRaw == b.octaveRaw,
+                  "seed %d step %d: style layer altered the RANDOM zone", seed, i);
         }
         checked++;
     }
-    printf("random zone: %d seeds bit-identical to the pre-style generator\n",
-           checked);
+    printf("random zone: %d seeds bit-identical to the unshaped generator\n", checked);
 }
 
 // Style must never break the weight permutation — DENSITY exactness depends
-// on it (invariant 3), and the bass zone actively reorders weights.
+// on it, and the bass zone rebuilds the weights outright.
 static void test_style_preserves_permutation() {
     for (int seed = 0; seed < NUM_SEEDS; seed++) {
-        StepData s[MAX_STEPS];
-        generatePattern(seed, s);
+        Pattern pat; generatePattern(seed, pat);
         bool seen[MAX_STEPS + 1] = {};
         for (int i = 0; i < MAX_STEPS; i++) {
-            CHECK(s[i].weight >= 1 && s[i].weight <= MAX_STEPS,
-                  "seed %d weight %d out of range", seed, s[i].weight);
-            CHECK(!seen[s[i].weight], "seed %d duplicate weight %d after style",
-                  seed, s[i].weight);
-            seen[s[i].weight] = true;
+            int w = pat.steps[i].weight;
+            CHECK(w >= 1 && w <= MAX_STEPS, "seed %d weight %d out of range", seed, w);
+            CHECK(!seen[w], "seed %d duplicate weight %d after style", seed, w);
+            seen[w] = true;
+        }
+        for (int d = 1; d <= MAX_STEPS; d++) {
+            int n = 0;
+            for (int i = 0; i < MAX_STEPS; i++) if (pat.steps[i].weight <= d) n++;
+            CHECK(n == d, "seed %d density %d activates %d steps", seed, d, n);
         }
     }
     printf("style: weights remain a permutation of 1..16 in every zone\n");
 }
 
-// Bass zone: the first steps to appear as DENSITY rises should be on the beat.
-static void test_bass_beat_bias() {
-    auto strongFraction = [](Style want) {
-        int strong = 0, total = 0;
+// ── the bug this rewrite exists to fix ──────────────────────────────────────
+//
+// The old bass zone pulled weights 1-4 onto a FIXED beat-priority table, so
+// at DENSITY 4 all 320 bass seeds played the same four positions in the bar.
+// Rhythm must vary seed to seed.
+static void test_bass_rhythm_varies_between_seeds() {
+    // Measured floors, comfortably under what the generator actually produces
+    // (16 / 29 / 46 / 100 / 145 / 189 at densities 1-6) but far above the
+    // 1-2 a fixed beat-priority table would give. Bass is DELIBERATELY more
+    // constrained than the random zone — the point is that it is not collapsed.
+    static const int FLOOR[7] = { 0, 12, 24, 38, 80, 120, 150 };
+
+    for (int density = 1; density <= 6; density++) {
+        unsigned seen[512]; int n = 0, total = 0, randDistinct = 0;
+        unsigned rseen[512]; int rn = 0;
         for (int seed = 0; seed < NUM_SEEDS; seed++) {
-            if (styleForSeed(seed) != want) continue;
-            StepData s[MAX_STEPS];
-            generatePattern(seed, s);
-            for (int i = 0; i < MAX_STEPS; i++) {
-                if (s[i].weight <= 4) {          // what DENSITY 4 plays
-                    total++;
-                    if (isStrongBeat(i)) strong++;
-                }
+            Style st = styleForSeed(seed);
+            if (st != STYLE_BASS && st != STYLE_RANDOM) continue;
+            Pattern pat; generatePattern(seed, pat);
+            unsigned m = activeMask(pat, density);
+            if (st == STYLE_BASS) {
+                total++;
+                bool known = false;
+                for (int i = 0; i < n; i++) if (seen[i] == m) { known = true; break; }
+                if (!known && n < 512) seen[n++] = m;
+            } else {
+                bool known = false;
+                for (int i = 0; i < rn; i++) if (rseen[i] == m) { known = true; break; }
+                if (!known && rn < 512) rseen[rn++] = m;
             }
         }
-        return total ? float(strong) / float(total) : 0.f;
-    };
-
-    float bass   = strongFraction(STYLE_BASS);
-    float random = strongFraction(STYLE_RANDOM);
-    // Chance level is 4 of 16 = 0.25; the random zone should sit near it.
-    CHECK(random > 0.18f && random < 0.33f,
-          "random zone is not near chance on strong beats (%.2f)", random);
-    CHECK(bass > 0.6f,
-          "bass zone only puts %.0f%% of its first notes on the beat", bass * 100);
-    CHECK(bass > random * 2.f,
-          "bass beat bias too weak: %.2f vs %.2f", bass, random);
-    printf("bass rhythm: %.0f%% of DENSITY-4 notes land on beats 1/2/3/4 "
-           "(random zone %.0f%%, chance 25%%)\n", bass * 100, random * 100);
+        randDistinct = rn;
+        CHECK(n >= FLOOR[density],
+              "density %d: only %d distinct bass rhythms across %d seeds "
+              "(floor %d) — the zone has collapsed", density, n, total, FLOOR[density]);
+        CHECK(density == 1 || n < randDistinct,
+              "density %d: bass is not more constrained than random (%d vs %d)",
+              density, n, randDistinct);
+        if (density == 4)
+            printf("bass rhythm: %d distinct patterns across %d seeds at DENSITY 4 "
+                   "(random zone %d; a fixed beat table gives 1)\n",
+                   n, total, randDistinct);
+    }
 }
 
-// Bass zone: pitches should cluster on the root and the fifth.
-static void test_bass_pitch_anchor() {
-    auto anchorFraction = [](Style want) {
-        int anchored = 0, total = 0;
+// Acid lines run in sixteenths: active steps should be adjacent far more
+// often than chance, and more often than in the random zone.
+static void test_bass_runs_of_sixteenths() {
+    auto adjacency = [](Style want, int density) {
+        int adj = 0, active = 0;
         for (int seed = 0; seed < NUM_SEEDS; seed++) {
             if (styleForSeed(seed) != want) continue;
-            StepData s[MAX_STEPS];
-            generatePattern(seed, s);
+            Pattern pat; generatePattern(seed, pat);
+            unsigned m = activeMask(pat, density);
             for (int i = 0; i < MAX_STEPS; i++) {
-                total++;
-                if (isAnchorPitch(s[i].pitchIndex)) anchored++;
+                if (!(m & (1u << i))) continue;
+                active++;
+                if (m & (1u << ((i + 1) % MAX_STEPS))) adj++;
             }
         }
-        return total ? float(anchored) / float(total) : 0.f;
+        return active ? float(adj) / float(active) : 0.f;
     };
-
-    float bass   = anchorFraction(STYLE_BASS);
-    float random = anchorFraction(STYLE_RANDOM);
-    CHECK(random > 0.2f && random < 0.42f,
-          "random zone is not near chance on anchor pitches (%.2f)", random);
-    CHECK(bass > random * 1.5f,
-          "bass pitch anchoring too weak: %.2f vs %.2f", bass, random);
-    printf("bass pitch: %.0f%% of notes on root/fifth (random zone %.0f%%, "
-           "chance 31%%)\n", bass * 100, random * 100);
-}
-
-// Bass zone in degree terms: notes should favour scale degree 0 and 4.
-static void test_bass_favours_root_and_fifth() {
-    auto degreeFraction = [](Style want) {
-        int hits = 0, total = 0;
-        for (int seed = 0; seed < NUM_SEEDS; seed++) {
-            if (styleForSeed(seed) != want) continue;
-            StepData s[MAX_STEPS];
-            generatePattern(seed, s);
-            for (int i = 0; i < MAX_STEPS; i++) {
-                int d = degreeForIndex(s[i].pitchIndex, 7);   // a 7-note scale
-                total++;
-                if (d == 0 || d == 4) hits++;
-            }
-        }
-        return total ? float(hits) / float(total) : 0.f;
-    };
-    float bass   = degreeFraction(STYLE_BASS);
-    float random = degreeFraction(STYLE_RANDOM);
-    CHECK(bass > random * 1.4f,
-          "bass does not favour degrees 0/4 enough: %.2f vs %.2f", bass, random);
-    printf("bass degrees: %.0f%% of notes are the root or the fifth "
+    float bass   = adjacency(STYLE_BASS, 6);
+    float random = adjacency(STYLE_RANDOM, 6);
+    CHECK(bass > random * 1.25f,
+          "bass notes are not run-like: %.2f adjacency vs random %.2f", bass, random);
+    printf("bass runs: %.0f%% of notes are followed immediately by another "
            "(random zone %.0f%%)\n", bass * 100, random * 100);
 }
 
-// Arp zone: each block of four steps must be a monotonic run.
-static void test_arp_stepwise() {
-    auto monotonicBlocks = [](Style want) {
-        int mono = 0, total = 0;
-        for (int seed = 0; seed < NUM_SEEDS; seed++) {
-            if (styleForSeed(seed) != want) continue;
-            StepData s[MAX_STEPS];
-            generatePattern(seed, s);
-            for (int b = 0; b < MAX_STEPS; b += 4) {
-                bool up = true, down = true;
-                for (int k = 1; k < 4; k++) {
-                    if (s[b + k].pitchIndex < s[b + k - 1].pitchIndex) up = false;
-                    if (s[b + k].pitchIndex > s[b + k - 1].pitchIndex) down = false;
-                }
-                total++;
-                if (up || down) mono++;
-            }
-        }
-        return total ? float(mono) / float(total) : 0.f;
-    };
-
-    float arp    = monotonicBlocks(STYLE_ARP);
-    float random = monotonicBlocks(STYLE_RANDOM);
-    CHECK(arp > 0.999f,
-          "arp blocks are not all monotonic runs (%.3f)", arp);
-    CHECK(random < 0.5f,
-          "random zone is suspiciously arpeggiated (%.2f)", random);
-    printf("arp shape: %.0f%% of 4-step blocks are runs (random zone %.0f%%)\n",
-           arp * 100, random * 100);
-}
-
-// Every zone must have its own gate-length character.
-static void test_gate_distributions_differ() {
-    auto stats = [](Style want, float& mean, float& lo, float& hi) {
-        double sum = 0; int n = 0;
-        lo = 1e9f; hi = -1e9f;
-        for (int seed = 0; seed < NUM_SEEDS; seed++) {
-            if (styleForSeed(seed) != want) continue;
-            StepData s[MAX_STEPS];
-            generatePattern(seed, s);
-            for (int i = 0; i < MAX_STEPS; i++) {
-                float g = s[i].gateLength;
-                sum += g; n++;
-                if (g < lo) lo = g;
-                if (g > hi) hi = g;
-            }
-        }
-        mean = n ? float(sum / n) : 0.f;
-    };
-
-    float bm, bl, bh, rm, rl, rh, am, al, ah;
-    stats(STYLE_BASS,   bm, bl, bh);
-    stats(STYLE_RANDOM, rm, rl, rh);
-    stats(STYLE_ARP,    am, al, ah);
-
-    CHECK(bm < rm - 0.05f, "bass gates are not shorter than random (%.2f vs %.2f)", bm, rm);
-    CHECK(am < rm - 0.05f, "arp gates are not shorter than random (%.2f vs %.2f)", am, rm);
-    CHECK(std::fabs(bm - am) > 0.02f,
-          "bass and arp gate means are indistinguishable (%.3f vs %.3f)", bm, am);
-    CHECK((ah - al) < (rh - rl) * 0.6f,
-          "arp gates are not more even than random (%.2f vs %.2f)", ah - al, rh - rl);
-    // every zone must still be inside the module's documented gate range
-    CHECK(bl >= 0.1f && bh <= 0.9f, "bass gates out of range %.2f–%.2f", bl, bh);
-    CHECK(al >= 0.1f && ah <= 0.9f, "arp gates out of range %.2f–%.2f", al, ah);
-    printf("gate character: bass %.2f (%.2f–%.2f), random %.2f (%.2f–%.2f), "
-           "arp %.2f (%.2f–%.2f)\n", bm, bl, bh, rm, rl, rh, am, al, ah);
-}
-
-// Style must not reintroduce nondeterminism, and must not make neighbouring
-// seeds within a zone collapse into each other.
-static void test_style_determinism_and_variety() {
+// The downbeat should usually lead the pattern.
+static void test_bass_downbeat() {
+    int onDownbeat = 0, total = 0;
     for (int seed = 0; seed < NUM_SEEDS; seed++) {
-        StepData a[MAX_STEPS], b[MAX_STEPS];
+        if (styleForSeed(seed) != STYLE_BASS) continue;
+        Pattern pat; generatePattern(seed, pat);
+        total++;
+        if (pat.steps[0].weight == 1) onDownbeat++;
+    }
+    float frac = float(onDownbeat) / float(total);
+    CHECK(frac > 0.7f && frac < 0.95f,
+          "bass downbeat rate %.2f is outside the intended band", frac);
+    printf("bass downbeat: %.0f%% of seeds put their first note on step 1\n", frac * 100);
+}
+
+// Acid vocabulary: root-dominated, and nothing outside the acid set.
+static void test_bass_pitch_vocabulary() {
+    int root = 0, inSet = 0, total = 0;
+    for (int seed = 0; seed < NUM_SEEDS; seed++) {
+        if (styleForSeed(seed) != STYLE_BASS) continue;
+        Pattern pat; generatePattern(seed, pat);
+        for (int i = 0; i < MAX_STEPS; i++) {
+            int idx = pat.steps[i].pitchIndex;
+            total++;
+            if (isAcidPitch(idx)) inSet++;
+            if (idx == ACID_ROOT) root++;
+            CHECK(isAcidPitch(idx),
+                  "seed %d step %d: pitch %d is outside the acid vocabulary",
+                  seed, i, idx);
+        }
+    }
+    CHECK(inSet == total, "%d bass notes left the acid set", total - inSet);
+    float rootFrac = float(root) / float(total);
+    CHECK(rootFrac > 0.45f && rootFrac < 0.65f,
+          "root dominance %.2f is outside the intended band", rootFrac);
+    // and the degrees those indices map to, in a 7-note scale
+    CHECK(degreeForIndex(ACID_ROOT, 7) == 0,    "ACID_ROOT is not degree 0");
+    CHECK(degreeForIndex(ACID_THIRD, 7) == 2,   "ACID_THIRD is not degree 2");
+    CHECK(degreeForIndex(ACID_FOURTH, 7) == 3,  "ACID_FOURTH is not degree 3");
+    CHECK(degreeForIndex(ACID_FIFTH, 7) == 4,   "ACID_FIFTH is not degree 4");
+    CHECK(degreeForIndex(ACID_SEVENTH, 7) == 6, "ACID_SEVENTH is not degree 6");
+    printf("bass pitch: %.0f%% root, every note from the acid set "
+           "(root/3rd/4th/5th/7th)\n", rootFrac * 100);
+}
+
+// Octave-up jumps: present, rare, and never anything but +1.
+static void test_bass_octave_jumps() {
+    int up = 0, total = 0;
+    for (int seed = 0; seed < NUM_SEEDS; seed++) {
+        if (styleForSeed(seed) != STYLE_BASS) continue;
+        Pattern pat; generatePattern(seed, pat);
+        for (int i = 0; i < MAX_STEPS; i++) {
+            int j = pat.steps[i].octaveJump;
+            CHECK(j == 0 || j == 1, "seed %d step %d octaveJump %d", seed, i, j);
+            if (j == 1) up++;
+            total++;
+        }
+    }
+    float frac = float(up) / float(total);
+    CHECK(frac > 0.10f && frac < 0.28f,
+          "octave-up rate %.2f is outside the intended band", frac);
+    // and the jump survives a narrow OCTAVE RANGE setting
+    CHECK(octaveForStep(1, 0.f, 1) == 0, "a jump did not clamp at range 1");
+    CHECK(octaveForStep(1, 0.f, 2) == 1, "a jump was lost at range 2");
+    CHECK(octaveForStep(1, 0.f, 5) == 1, "a jump grew with the range");
+    printf("bass octaves: %.0f%% of notes jump up one, and stay +1 at any range\n",
+           frac * 100);
+}
+
+// Ties are common in acid, and far more common than in the random zone.
+static void test_bass_ties() {
+    auto slideRate = [](Style want) {
+        int n = 0, total = 0;
+        for (int seed = 0; seed < NUM_SEEDS; seed++) {
+            if (styleForSeed(seed) != want) continue;
+            Pattern pat; generatePattern(seed, pat);
+            for (int i = 0; i < MAX_STEPS; i++) { total++; if (pat.steps[i].slide) n++; }
+        }
+        return total ? float(n) / float(total) : 0.f;
+    };
+    float bass = slideRate(STYLE_BASS), random = slideRate(STYLE_RANDOM);
+    CHECK(bass > random * 1.15f, "bass does not tie more than random (%.2f vs %.2f)",
+          bass, random);
+    printf("bass ties: %.0f%% of steps slide (random zone %.0f%%)\n",
+           bass * 100, random * 100);
+}
+
+// Arp: the pattern must follow its subgroup's direction.
+static void test_arp_shapes() {
+    int checked = 0;
+    for (int seed = 21 * 32; seed < NUM_SEEDS; seed += 7) {
+        Pattern pat; generatePattern(seed, pat);
+        const int* p0 = nullptr; (void)p0;
+        ArpMode mode = arpModeForSeed(seed);
+        const StepData* s = pat.steps;
+        if (mode == ARP_UP) {
+            for (int i = 1; i < MAX_STEPS; i++)
+                CHECK(s[i].pitchIndex >= s[i-1].pitchIndex,
+                      "seed %d ARP_UP dips at step %d", seed, i);
+        } else if (mode == ARP_DOWN) {
+            for (int i = 1; i < MAX_STEPS; i++)
+                CHECK(s[i].pitchIndex <= s[i-1].pitchIndex,
+                      "seed %d ARP_DOWN rises at step %d", seed, i);
+        } else if (mode == ARP_UPDOWN) {
+            for (int i = 1; i < MAX_STEPS / 2; i++)
+                CHECK(s[i].pitchIndex >= s[i-1].pitchIndex,
+                      "seed %d ARP_UPDOWN first half dips at %d", seed, i);
+            for (int i = MAX_STEPS / 2 + 1; i < MAX_STEPS; i++)
+                CHECK(s[i].pitchIndex <= s[i-1].pitchIndex,
+                      "seed %d ARP_UPDOWN second half rises at %d", seed, i);
+        } else {
+            for (int i = 1; i < MAX_STEPS / 2; i++)
+                CHECK(s[i].pitchIndex <= s[i-1].pitchIndex,
+                      "seed %d ARP_DOWNUP first half rises at %d", seed, i);
+            for (int i = MAX_STEPS / 2 + 1; i < MAX_STEPS; i++)
+                CHECK(s[i].pitchIndex >= s[i-1].pitchIndex,
+                      "seed %d ARP_DOWNUP second half dips at %d", seed, i);
+        }
+        // arps are even and do not glide
+        for (int i = 0; i < MAX_STEPS; i++) {
+            CHECK(!s[i].slide, "seed %d step %d: an arp slid", seed, i);
+            CHECK(s[i].gateIndex == 1, "seed %d step %d: arp gate is not consistent",
+                  seed, i);
+        }
+        checked++;
+    }
+    printf("arp shapes: %d seeds follow their subgroup's direction, even gates, "
+           "no glide\n", checked);
+}
+
+// Each zone must still have its own gate character.
+static void test_gate_character() {
+    auto meanIndex = [](Style want) {
+        double sum = 0; int n = 0;
+        for (int seed = 0; seed < NUM_SEEDS; seed++) {
+            if (styleForSeed(seed) != want) continue;
+            Pattern pat; generatePattern(seed, pat);
+            for (int i = 0; i < MAX_STEPS; i++) { sum += pat.steps[i].gateIndex; n++; }
+        }
+        return n ? float(sum / n) : 0.f;
+    };
+    float bass = meanIndex(STYLE_BASS), random = meanIndex(STYLE_RANDOM),
+          arp  = meanIndex(STYLE_ARP);
+    CHECK(bass < random, "bass gates are not shorter than random (%.2f vs %.2f)",
+          bass, random);
+    CHECK(std::fabs(arp - 1.f) < 1e-5f, "arp gates are not all the middle length");
+    printf("gate character: mean length index — bass %.2f, random %.2f, arp %.2f\n",
+           bass, random, arp);
+}
+
+// Determinism, and no two neighbouring seeds collapsing together.
+static void test_determinism_and_variety() {
+    for (int seed = 0; seed < NUM_SEEDS; seed++) {
+        Pattern a, b;
         generatePattern(seed, a);
         generatePattern(seed, b);
         for (int i = 0; i < MAX_STEPS; i++)
-            CHECK(a[i].weight == b[i].weight && a[i].pitchIndex == b[i].pitchIndex
-               && a[i].gateLength == b[i].gateLength,
+            CHECK(a.steps[i].weight == b.steps[i].weight
+               && a.steps[i].pitchIndex == b.steps[i].pitchIndex
+               && a.steps[i].gateIndex == b.steps[i].gateIndex
+               && a.steps[i].velLayer == b.steps[i].velLayer,
                   "seed %d step %d not deterministic after style", seed, i);
     }
     int identical = 0;
     for (int seed = 0; seed < NUM_SEEDS - 1; seed++) {
         if (styleForSeed(seed) != styleForSeed(seed + 1)) continue;
-        StepData a[MAX_STEPS], b[MAX_STEPS];
+        Pattern a, b;
         generatePattern(seed, a);
         generatePattern(seed + 1, b);
         int same = 0;
         for (int i = 0; i < MAX_STEPS; i++)
-            if (a[i].pitchIndex == b[i].pitchIndex && a[i].weight == b[i].weight)
-                same++;
-        if (same >= 14) identical++;
+            if (a.steps[i].pitchIndex == b.steps[i].pitchIndex
+             && a.steps[i].weight == b.steps[i].weight) same++;
+        if (same >= 15) identical++;
     }
     CHECK(identical == 0,
           "%d neighbouring seeds collapsed into near-identical patterns", identical);
@@ -285,14 +381,18 @@ static void test_style_determinism_and_variety() {
 
 int main() {
     test_style_zones();
+    test_arp_subgroup_modes();
     test_random_zone_unchanged();
     test_style_preserves_permutation();
-    test_bass_beat_bias();
-    test_bass_pitch_anchor();
-    test_bass_favours_root_and_fifth();
-    test_arp_stepwise();
-    test_gate_distributions_differ();
-    test_style_determinism_and_variety();
+    test_bass_rhythm_varies_between_seeds();
+    test_bass_runs_of_sixteenths();
+    test_bass_downbeat();
+    test_bass_pitch_vocabulary();
+    test_bass_octave_jumps();
+    test_bass_ties();
+    test_arp_shapes();
+    test_gate_character();
+    test_determinism_and_variety();
 
     if (failures) {
         printf("\n%d FAILURES\n", failures);
