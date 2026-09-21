@@ -1,7 +1,11 @@
 # NZZL — Design Record
 
-This document is the authoritative record of design decisions. The source
-spec now lives in the repo as **[HANDOFF_SPEC.md](HANDOFF_SPEC.md)** (copied
+This document is the authoritative record of **why** each decision was made.
+Two companions: **[SPEC_AS_BUILT.md](SPEC_AS_BUILT.md)** describes **what** the
+module currently is, and **[HANDOFF_SPEC.md](HANDOFF_SPEC.md)** is the frozen
+original requirements.
+
+The source spec lives in the repo as **[HANDOFF_SPEC.md](HANDOFF_SPEC.md)** (copied
 in 2026-09-20 — before that, three sessions were building against a one-line
 paraphrase of it). That file is the requirements; this one records **how**
 we're building them and **why**, including every place we deliberately
@@ -280,8 +284,10 @@ All four open questions from the original deferral list are now settled.
 ## Deviations from the handoff spec
 
 Four places where the build knowingly differs from
-[HANDOFF_SPEC.md](HANDOFF_SPEC.md). Each was a user decision, not an
-oversight. Anything not listed here follows the spec.
+[HANDOFF_SPEC.md](HANDOFF_SPEC.md) on a **user decision**. The complete
+difference list — these four plus the engineering choices and the four
+requirements that were implemented wrong and later fixed — is in
+[SPEC_AS_BUILT.md § Differences from the original requirements](SPEC_AS_BUILT.md#differences-from-the-original-requirements).
 
 | Spec says | We build | Why |
 |---|---|---|

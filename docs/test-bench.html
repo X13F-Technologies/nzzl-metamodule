@@ -1,0 +1,462 @@
+<title>NZZL Test Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#f3f1ec; --surface:#fffdf9; --surface-2:#ebe7df;
+  --ink:#1d2127; --ink-2:#4a515c; --muted:#787f8b;
+  --rule:#ddd7cc; --rule-2:#c9c2b4;
+  --brass:#9a6f22; --brass-soft:#f0e3c6;
+  --pass:#3f6b45; --pass-bg:#e2eddf;
+  --fail:#a33f32; --fail-bg:#f7e2dd;
+  --na:#6b7280;  --na-bg:#e8e6e1;
+  --shadow:0 1px 2px rgba(30,25,15,.07), 0 6px 18px rgba(30,25,15,.05);
+  --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --cond:"Barlow Condensed","Arial Narrow",var(--sans);
+}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --ground:#15181d; --surface:#1d2127; --surface-2:#252a32;
+  --ink:#e9e6e0; --ink-2:#b9bec7; --muted:#878e99;
+  --rule:#2c323b; --rule-2:#3b434e;
+  --brass:#d5a75e; --brass-soft:#39301c;
+  --pass:#83b087; --pass-bg:#22301f;
+  --fail:#e08878; --fail-bg:#35211d;
+  --na:#8b929d;  --na-bg:#272c33;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.28);
+}}
+:root[data-theme="dark"]{
+  --ground:#15181d; --surface:#1d2127; --surface-2:#252a32;
+  --ink:#e9e6e0; --ink-2:#b9bec7; --muted:#878e99;
+  --rule:#2c323b; --rule-2:#3b434e;
+  --brass:#d5a75e; --brass-soft:#39301c;
+  --pass:#83b087; --pass-bg:#22301f;
+  --fail:#e08878; --fail-bg:#35211d;
+  --na:#8b929d;  --na-bg:#272c33;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+  font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:0 64px}
+
+/* ── masthead ─────────────────────────────────────────── */
+.mast{padding-block:28px 18px;border-bottom:2px solid var(--ink);margin-bottom:0}
+.mast h1{font-family:var(--cond);font-weight:600;font-size:clamp(30px,6vw,46px);
+  letter-spacing:.14em;text-transform:uppercase;margin:0;line-height:1}
+.mast .sub{font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);margin-top:8px}
+.mast .sub b{color:var(--brass);font-weight:500}
+
+/* ── run header ───────────────────────────────────────── */
+.runbar{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-end;
+  padding-block:14px;border-bottom:1px solid var(--rule)}
+.field{display:flex;flex-direction:column;gap:3px}
+.field label{font-family:var(--mono);font-size:10px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted)}
+.field input{font-family:var(--mono);font-size:12.5px;background:var(--surface);
+  color:var(--ink);border:1px solid var(--rule-2);border-radius:3px;
+  padding:6px 8px;min-width:150px}
+.field input:focus-visible{outline:2px solid var(--brass);outline-offset:1px}
+
+/* ── sticky summary ───────────────────────────────────── */
+.summary{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;
+  background:var(--ground);border-bottom:1px solid var(--rule);
+  padding-block:10px;margin-bottom:22px}
+.rail{display:flex;height:8px;border-radius:2px;overflow:hidden;
+  background:var(--surface-2);margin-bottom:9px}
+.rail span{display:block;transition:width .25s ease}
+.rail .s-pass{background:var(--pass)} .rail .s-fail{background:var(--fail)}
+.rail .s-na{background:var(--na)}
+.tallies{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center}
+.tally{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--muted);display:flex;gap:6px;align-items:baseline}
+.tally b{font-size:16px;font-weight:500;font-variant-numeric:tabular-nums}
+.tally.t-pass b{color:var(--pass)} .tally.t-fail b{color:var(--fail)}
+.tally.t-na b{color:var(--na)} .tally.t-left b{color:var(--ink)}
+.spacer{flex:1 1 auto}
+.tools{display:flex;gap:7px;flex-wrap:wrap}
+button.btn{font-family:var(--mono);font-size:11px;letter-spacing:.06em;
+  text-transform:uppercase;background:var(--surface);color:var(--ink-2);
+  border:1px solid var(--rule-2);border-radius:3px;padding:6px 10px;cursor:pointer}
+button.btn:hover{border-color:var(--brass);color:var(--brass)}
+button.btn[aria-pressed="true"]{background:var(--brass);border-color:var(--brass);
+  color:var(--ground)}
+button.btn:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+.notice{font-family:var(--mono);font-size:11.5px;padding:9px 12px;border-radius:3px;
+  background:var(--brass-soft);color:var(--brass);border:1px solid var(--brass);
+  margin-bottom:16px}
+
+/* ── sections ─────────────────────────────────────────── */
+.sect{margin-bottom:26px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:4px;box-shadow:var(--shadow);overflow:hidden}
+.sect > header{display:flex;align-items:center;gap:12px;padding:12px 16px;
+  background:var(--surface-2);border-bottom:1px solid var(--rule);cursor:pointer;
+  user-select:none}
+.sect > header:focus-visible{outline:2px solid var(--brass);outline-offset:-2px}
+.sect .num{font-family:var(--mono);font-size:11px;color:var(--muted);
+  min-width:22px;font-variant-numeric:tabular-nums}
+.sect h2{font-family:var(--cond);font-weight:600;font-size:19px;letter-spacing:.07em;
+  text-transform:uppercase;margin:0;flex:1 1 auto;line-height:1.15}
+.flag{font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+  padding:2px 6px;border-radius:2px;border:1px solid currentColor;white-space:nowrap}
+.flag.hw{color:var(--brass)}
+.sect .count{font-family:var(--mono);font-size:11px;color:var(--muted);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.chev{color:var(--muted);font-size:11px;transition:transform .15s ease}
+.sect[data-open="false"] .chev{transform:rotate(-90deg)}
+.sect[data-open="false"] .rows{display:none}
+
+/* ── rows ─────────────────────────────────────────────── */
+.rows{display:flex;flex-direction:column}
+.row{display:grid;grid-template-columns:54px 1.05fr 1.3fr 128px minmax(150px,.85fr);
+  gap:14px;align-items:start;padding:13px 16px;border-bottom:1px solid var(--rule)}
+.row:last-child{border-bottom:0}
+.row[data-status="pass"]{background:linear-gradient(90deg,var(--pass-bg),transparent 55%)}
+.row[data-status="fail"]{background:linear-gradient(90deg,var(--fail-bg),transparent 55%)}
+.row[data-status="na"]{opacity:.62}
+.tid{font-family:var(--mono);font-size:11.5px;font-weight:500;color:var(--brass);
+  padding-top:2px;letter-spacing:-.01em}
+.do,.exp{font-size:13px;line-height:1.45}
+.exp{color:var(--ink-2)}
+.colhead{display:grid;grid-template-columns:54px 1.05fr 1.3fr 128px minmax(150px,.85fr);
+  gap:14px;padding:8px 16px;border-bottom:1px solid var(--rule-2);
+  background:var(--surface);font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.11em;text-transform:uppercase;color:var(--muted)}
+
+.mark{display:flex;gap:0;border:1px solid var(--rule-2);border-radius:3px;overflow:hidden}
+.mark button{flex:1 1 0;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;
+  background:var(--surface);color:var(--muted);border:0;border-right:1px solid var(--rule-2);
+  padding:7px 2px;cursor:pointer;text-transform:uppercase}
+.mark button:last-child{border-right:0}
+.mark button:hover{color:var(--ink)}
+.mark button:focus-visible{outline:2px solid var(--brass);outline-offset:-2px}
+.mark button[aria-pressed="true"]{color:var(--ground);font-weight:500}
+.mark button.m-pass[aria-pressed="true"]{background:var(--pass)}
+.mark button.m-fail[aria-pressed="true"]{background:var(--fail)}
+.mark button.m-na[aria-pressed="true"]{background:var(--na)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .mark button[aria-pressed="true"]{color:#15181d}}
+:root[data-theme="dark"] .mark button[aria-pressed="true"]{color:#15181d}
+
+.cmt{width:100%;font-family:var(--sans);font-size:12.5px;color:var(--ink);
+  background:transparent;border:0;border-bottom:1px dashed var(--rule-2);
+  padding:5px 2px;resize:vertical;min-height:30px;line-height:1.4}
+.cmt::placeholder{color:var(--muted);opacity:.7}
+.cmt:focus{outline:0;border-bottom-color:var(--brass);background:var(--surface-2)}
+
+footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--rule);
+  font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.7}
+footer b{color:var(--ink-2);font-weight:500}
+
+@media (max-width:880px){
+  .colhead{display:none}
+  .row{grid-template-columns:52px 1fr;gap:6px 12px;padding:14px 14px}
+  .tid{grid-row:span 4}
+  .mark{margin-top:4px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <div class="mast">
+    <h1>NZZL Test Bench</h1>
+    <div class="sub">Manual acceptance &middot; <b id="ct">144 tests</b> &middot; 4ms MetaModule / VCV Rack 2</div>
+  </div>
+
+  <div class="runbar">
+    <div class="field"><label for="f-date">Date</label><input id="f-date" type="text" placeholder="2026-09-20"></div>
+    <div class="field"><label for="f-build">Build / commit</label><input id="f-build" type="text" placeholder="ecc087a"></div>
+    <div class="field"><label for="f-tester">Tester</label><input id="f-tester" type="text" placeholder="Gerardo"></div>
+  </div>
+
+  <div class="summary">
+    <div class="rail" id="rail" role="img" aria-label="Progress"></div>
+    <div class="tallies">
+      <span class="tally t-pass"><b id="n-pass">0</b> pass</span>
+      <span class="tally t-fail"><b id="n-fail">0</b> fail</span>
+      <span class="tally t-na"><b id="n-na">0</b> n/a</span>
+      <span class="tally t-left"><b id="n-left">144</b> left</span>
+      <span class="spacer"></span>
+      <span class="tools">
+        <button class="btn" id="f-all" aria-pressed="true">All</button>
+        <button class="btn" id="f-todo" aria-pressed="false">Unmarked</button>
+        <button class="btn" id="f-bad" aria-pressed="false">Failures</button>
+        <button class="btn" id="b-copy">Copy report</button>
+      </span>
+    </div>
+  </div>
+
+  <div id="status" class="notice" hidden></div>
+  <div id="sections"></div>
+
+  <footer>
+    Source of truth is <b>docs/SYSTEM_TEST_GUIDE.md</b> in nzzl-metamodule &mdash; this page mirrors it.<br>
+    Report a failure with the test ID, the knob settings and the seed (GROUP/SUBGROUP).
+    Seed plus knobs reproduces anything this module does.<br>
+    <b>N/A</b> is for tests you cannot run yet &mdash; hardware, mainly &mdash; not for ones you skipped.
+  </footer>
+</div>
+
+<script id="test-data" type="application/json">[{"n":1,"title":"Smoke test – 5 minutes","status":"now","tests":[{"id":"S.1","do":"Add NZZL to a rack","expect":"Module appears, no Rack crash, no red \"failed to load\" panel"},{"id":"S.2","do":"Look at the panel","expect":"11 knobs, 7 input jacks, 3 output jacks, all labelled, nothing overlapping or off the edge"},{"id":"S.2b","do":"Look at the display","expect":"Three lines: 1 . 1, BASS, C MINOR. Legible, not clipped"},{"id":"S.3","do":"Start the LFO clock","expect":"Gate LED activity on the Scope; you hear notes"},{"id":"S.4","do":"Let it run 60 s","expect":"No dropouts, no clicks on every note, no runaway CPU (right-click module → CPU meter stays low)"},{"id":"S.5","do":"Remove and re-add the module","expect":"No crash"}]},{"n":2,"title":"Clock, Run, Divide, Length – Tasks 1–2","status":"now","tests":[{"id":"T2.1","do":"Unpatch CLOCK entirely","expect":"Sequencer freezes. Gate stays at its last state and no new notes fire"},{"id":"T2.2","do":"Re-patch CLOCK","expect":"Playback resumes from where it stopped, not from step 1"},{"id":"T2.3","do":"Sweep LFO FREQ 0.5 Hz → 8 Hz","expect":"Pattern speeds up smoothly; the rhythm (which steps play) is unchanged"},{"id":"T2.4","do":"Set CLK DIV = 2","expect":"Steps advance half as often — one step per 2 clock pulses"},{"id":"T2.5","do":"Set CLK DIV = 4, then 16","expect":"Divides correctly; at 16 the pattern is very slow but still advances"},{"id":"T2.6","do":"Return CLK DIV = 1. Set LENGTH = 4","expect":"Only the first 4 steps of the pattern loop"},{"id":"T2.7","do":"Sweep LENGTH 2 → 16","expect":"Loop grows one step at a time; no silence or stall at any setting"},{"id":"T2.8","do":"Patch an LFO/button into RUN and send one trigger","expect":"Playback stops (RUN is a toggle, not a gate)"},{"id":"T2.9","do":"Send a second trigger","expect":"Playback resumes from the held step, not from step 1"},{"id":"T2.10","do":"Hold RUN input high continuously (constant 10 V, no edges)","expect":"Nothing toggles — only rising edges matter"},{"id":"T2.11","do":"Unpatch RUN while stopped","expect":"Module runs again (unpatched = always running). This used to leave the module stuck stopped; fixed at Task 7 and now covered by the harness"}]},{"n":3,"title":"Seed system – Task 3","status":"now","tests":[{"id":"T3.1","do":"GROUP 1, step SUBGROUP 1 → 2 → 3 → 4","expect":"Each click gives a clearly different pattern — different notes and different rhythm. Not a subtle variation"},{"id":"T3.2","do":"SUBGROUP 1, step GROUP 1 → 2 → 3 → 4","expect":"Same: each is its own pattern"},{"id":"T3.3","do":"Set GROUP 7 / SUBGROUP 19, listen, note it. Move both knobs away, then set 7/19 again","expect":"Identical pattern returns — same notes, same rhythm, same accents"},{"id":"T3.4","do":"Sweep SUBGROUP fast across its whole range while running","expect":"No clicks, stalls or stuck gates; pattern changes cleanly on each value"},{"id":"T3.5","do":"Try ~10 scattered seeds","expect":"None are silent; none are a single repeated note; all sound like patterns"}]},{"n":4,"title":"Gate output & density – Task 4","status":"now","tests":[{"id":"T4.1","do":"DENSITY 8, default seed","expect":"Gates fire irregularly — not every step, not a steady pulse"},{"id":"T4.2","do":"Set DENSITY 1","expect":"Exactly one step in the 16 plays. Never silent"},{"id":"T4.3","do":"Set DENSITY 16","expect":"Every step plays"},{"id":"T4.4","do":"Step DENSITY 1 → 2 → 3 … → 16, pausing at each","expect":"Each click adds exactly one new gate and keeps all the previous ones. Nothing that was playing drops out"},{"id":"T4.5","do":"Step back down 16 → 1","expect":"Steps drop out one at a time, in reverse of the order they appeared"},{"id":"T4.6","do":"Note the pattern at seed 5/5 density 6. Change seed away and back","expect":"Identical gate pattern"},{"id":"T4.7","do":"Halve the LFO clock rate","expect":"Gates get proportionally longer — the shape of the rhythm stays the same, it just stretches"},{"id":"T4.8","do":"Set CLK DIV = 4","expect":"Gates lengthen to match the slower step rate — they don't stay short and stabby"},{"id":"T4.9","do":"Compare several seeds at DENSITY 8","expect":"Gate lengths vary step to step within a pattern (some stabs, some sustains), not all identical"},{"id":"T4.10","do":"Set LENGTH 4, sweep DENSITY","expect":"Within a 4-step loop the count is no longer exactly N — this is expected and documented; just confirm it still feels monotonic (more knob = more notes)"}]},{"n":5,"title":"Velocity output – Task 6","status":"now","tests":[{"id":"T6.1","do":"Run at DENSITY 8","expect":"Velocity output steps between different levels in the 0–10 V range"},{"id":"T6.2","do":"Watch during a silent step (no gate)","expect":"Velocity holds its last value — it does not drop to 0 or drift"},{"id":"T6.3","do":"Patch VELOCITY into VCA CV","expect":"Notes have audibly different loudness"},{"id":"T6.4","do":"Set DENSITY 1","expect":"Velocity changes only once per loop, at that one note"},{"id":"T6.5","do":"Recall a seed used earlier","expect":"Same velocity sequence as before"}]},{"n":6,"title":"Pitch, scales, root, octave – Task 5","status":"now","tests":[{"id":"T5.1","do":"Patch CV PITCH → VCO V/OCT, run at DENSITY 8","expect":"A melody plays. Pitch changes from note to note"},{"id":"T5.2","do":"Watch CV PITCH on the Scope","expect":"Voltage is a staircase — flat during each note, stepping at gate onsets. No glide, no noise (slide is Task 7)"},{"id":"T5.3","do":"Watch through a silent step","expect":"Pitch holds — it doesn't jump on steps where no gate fires"},{"id":"T5.4","do":"SCALE = Natural Minor, ROOT = C","expect":"Every note is in C minor. Play a C minor chord against it — nothing clashes"},{"id":"T5.5","do":"SCALE = position 0 (Unquantized)","expect":"Notes go audibly microtonal — clearly between the keys, sour on purpose. Not silence, not chaos"},{"id":"T5.6","do":"Sweep position 0 → 1 → 0 repeatedly","expect":"Snaps cleanly between detuned and in-tune. Same rhythm either way"},{"id":"T5.7","do":"Step SCALE through all 13 positions","expect":"Positions 1–12 are all in tune. Tooltips read exactly as the table above"},{"id":"T5.8","do":"Listen for character as you sweep","expect":"Major bright, Minor dark, Phrygian Dominant \"Spanish\", Chromatic anything-goes. They should be distinguishable by ear"},{"id":"T5.9","do":"Contour check. Note the melodic shape at Natural Minor — where it rises, where it falls. Now switch to Minor Pentatonic, then Major","expect":"The shape survives — the same steps are still the high points and low points. Only the colour changes. (This is why the mapping is proportional rather than modulo; if the melody scrambles on a scale change, that's a real bug.)"},{"id":"T5.10","do":"SCALE = Pentatonic Minor, then Whole Tone","expect":"Pentatonic: fewer distinct pitches, more repeats (5 degrees). Whole tone: no semitones anywhere, deliberately unsettled"},{"id":"T5.11","do":"SCALE = Chromatic","expect":"All 12 semitones available; sounds least \"composed\" of the quantized positions"},{"id":"T5.11b","do":"Judgement call, not pass/fail. Live with the folded-in knob for a few minutes","expect":"Does losing the ability to A/B straight back to your scale bother you in practice? If it does, the switch can come back — say so"},{"id":"T5.12","do":"Natural Minor. Step ROOT C → C# → D … → B","expect":"Each click transposes the whole pattern up one semitone. The melody is otherwise identical"},{"id":"T5.13","do":"ROOT C then ROOT B, checking CV PITCH on the Scope","expect":"The B reading is exactly 11/12 V ≈ 0.917 V higher than the C reading on the same step"},{"id":"T5.14","do":"Change ROOT while a note is sustaining","expect":"The held note transposes immediately — you don't wait for the next gate"},{"id":"T5.15","do":"Stays quantized. Step ROOT through all 12 with a scale selected, playing a chord in the new key against it each time","expect":"Every root is still perfectly in tune and in key — nothing drifts sharp or flat, nothing falls between the keys. Root is a whole-semitone transpose and nothing else"},{"id":"T5.16","do":"Sweep ROOT rapidly while running","expect":"No intermediate out-of-tune notes; it jumps key to key"},{"id":"T5.17","do":"SCALE = position 0 (Unquantized), sweep ROOT","expect":"Still transposes by exact semitones — the microtonal pattern moves as a block rather than smearing"},{"id":"T5.18","do":"OCT RANGE = 1","expect":"Pattern is confined to a single octave — narrow, almost monotone in span"},{"id":"T5.19","do":"OCT RANGE = 2","expect":"Notes spread over two octaves"},{"id":"T5.20","do":"OCT RANGE = 5","expect":"Wide, leaping pattern across five octaves"},{"id":"T5.21","do":"At OCT RANGE 5, watch the Scope over a full loop","expect":"Total pitch span is under 5 V above the lowest note (plus the ROOT offset). It must not exceed the knob setting"},{"id":"T5.22","do":"Sweep OCT RANGE 1 → 5 → 1","expect":"Returns to the same narrow pattern. No stuck high notes"},{"id":"T5.23","do":"Change OCT RANGE while a note sustains","expect":"Held note jumps immediately, same as ROOT"}]},{"n":7,"title":"Cross-feature and stress tests","status":"now","tests":[{"id":"X.1","do":"Wiggle every knob at once while running for 30 s","expect":"No crash, no stuck gate, no silence that doesn't recover"},{"id":"X.2","do":"Set LENGTH 2, DENSITY 1, CLK DIV 16","expect":"Extreme but functional — something still plays eventually"},{"id":"X.3","do":"Set LENGTH 16, DENSITY 16, CLK DIV 1, LFO at 20 Hz","expect":"Fast machine-gun playback, no dropouts, CPU stays sane"},{"id":"X.4","do":"Run two NZZL instances from one clock, both at seed 3/3","expect":"They stay perfectly in sync and identical — proves nothing hidden is per-instance random"},{"id":"X.5","do":"Same two instances, different seeds","expect":"Independent patterns, still rhythmically locked to the clock"},{"id":"X.6","do":"Save the patch, quit Rack, reopen","expect":"Knob positions and pattern restore. Full patch-save tests are in §13"},{"id":"X.7","do":"Leave running 10 minutes","expect":"No drift, no degradation, no memory growth"},{"id":"X.8","do":"Bypass the module (Ctrl/Cmd-E), then un-bypass","expect":"Clean recovery"}]},{"n":8,"title":"Slide – Task 7","status":"now","tests":[{"id":"T7.1","do":"SLIDE fully CCW (0)","expect":"Pitch changes are instantaneous — a clean staircase, no ramps at all"},{"id":"T7.2","do":"SLIDE to about halfway","expect":"Some notes now glide into pitch; others still jump. Only flagged steps slide"},{"id":"T7.3","do":"SLIDE fully CW","expect":"Glides are longer, but every one still arrives before the next note — no smearing across steps"},{"id":"T7.3b","do":"A slide is a tie. Watch GATE on the scope through a slid note","expect":"The gate does not drop between a slid note and the next one — they join into one long gate. Two separate gates with a glide between them is the wrong sound"},{"id":"T7.4","do":"Watch a glide on the Scope","expect":"A straight ramp that settles exactly on the target and stays flat. No overshoot, no wobble at the end"},{"id":"T7.5","do":"Halve the clock rate, SLIDE unchanged","expect":"Glides get proportionally longer — the feel survives a tempo change"},{"id":"T7.6","do":"Return SLIDE to 0 mid-glide","expect":"Later notes jump again immediately"},{"id":"T7.7","do":"Listen with SLIDE up","expect":"Should read as portamento/303-style glide, not as being out of tune"},{"id":"T7.8","do":"Patch an LFO into cvSLIDE with the SLIDE knob at noon","expect":"Glide comes and goes. Notes the seed never flagged start sliding too — that is intended"},{"id":"T7.9","do":"Turn SLIDE fully CCW with cvSLIDE still patched and high","expect":"All glide stops. The attenuator wins over the CV, always"}]},{"n":9,"title":"Style zones – Task 8","status":"now","tests":[{"id":"T8.1","do":"GROUP 3, DENSITY 6, SLIDE up, a resonant low-pass after the VCO","expect":"It should sound like an acid line — sixteenth runs, notes gliding into each other, the root hammered"},{"id":"T8.2","do":"The one that was broken. GROUP 1, DENSITY 4. Note which steps play. Now step GROUP 2, 3, 4 … 10 at the same density","expect":"Each group plays a different rhythm. They must not all land on the same four positions in the bar"},{"id":"T8.3","do":"Same again at DENSITY 2, then 6","expect":"Still varied. At 2 most seeds start on the downbeat — that is intended, not a collapse"},{"id":"T8.4","do":"GROUP 3, sweep DENSITY 1→8","expect":"Notes fill in as runs — new notes tend to sit next to existing ones rather than scatter"},{"id":"T8.5","do":"Listen to the pitches in any bass seed","expect":"Dominated by the root, with the fifth next. Should feel hypnotic and repetitive, not melodic"},{"id":"T8.6","do":"Listen for octave jumps","expect":"Occasional notes an octave up. Roughly one note in five"},{"id":"T8.7","do":"Set OCT RANGE 1, then 5, in a bass seed","expect":"The octave jumps stay one octave at range 5 — they do not grow into four-octave leaps"},{"id":"T8.8","do":"GROUP 16 (RAND), DENSITY 4","expect":"Noticeably more scattered than any bass seed. No root hammering"},{"id":"T8.9","do":"GROUP 24, SUBGROUP 3 (ARP↑)","expect":"Pitches walk upward through the pattern"},{"id":"T8.10","do":"Same group, SUBGROUP 11 (ARP↓)","expect":"Pitches walk downward"},{"id":"T8.11","do":"SUBGROUP 19 (ARP↕)","expect":"Up through the first half, back down through the second"},{"id":"T8.12","do":"SUBGROUP 27 (ARP↔)","expect":"Down first, then back up"},{"id":"T8.13","do":"Any arp seed with SLIDE up","expect":"Arps never glide — slide is a bass/random thing"},{"id":"T8.14","do":"Cross the boundaries: GROUP 10→11, then 21→22","expect":"Character changes at the boundary. The zone line changes to match"},{"id":"T8.15","do":"Judgement call. Do the zones earn their place?","expect":"Is BASS convincingly acid? Are 10/11/11 groups the right split? Opinions wanted"}]},{"n":10,"title":"Gate and Accent","status":"now","tests":[{"id":"G.1","do":"GATE 100%, DENSITY 16, watch GATE on the scope","expect":"Note lengths vary, but only between three distinct values — not sixteen different ones"},{"id":"G.2","do":"Sweep GATE 100% → 1%","expect":"Everything gets shorter together, staying in proportion. At the bottom, tight clicks"},{"id":"G.3","do":"Sweep GATE 100% → 200%","expect":"Notes lengthen. Around and past 100% the long notes start tying into the next step while the short ones stay staccato"},{"id":"G.4","do":"GATE 200%, listen","expect":"A partly-legato line, not a solid drone. If every note ties, that is wrong"},{"id":"G.5","do":"Change seed at GATE 150%","expect":"The three lengths change with the seed; the knob keeps its proportion"},{"id":"G.6","do":"ACCENT 100%, VELOCITY into a VCA","expect":"Clear loud/medium/quiet contrast between notes"},{"id":"G.7","do":"Sweep ACCENT 100% → 0%","expect":"Contrast flattens. At 0 every note is the same level"},{"id":"G.8","do":"ACCENT 0, watch VELOCITY on the scope","expect":"A flat line — it must not wander"},{"id":"G.9","do":"Bass seed, ACCENT 100%","expect":"Accents should fall in a way that reinforces the groove, roughly one note in four"},{"id":"G.10","do":"Judgement call","expect":"Is 1–200% the right GATE range? Does ACCENT 100 give enough contrast, or too much?"}]},{"n":11,"title":"Reseed – Task 9","status":"now","tests":[{"id":"T9.1","do":"Send one trigger","expect":"The pattern changes to a new one"},{"id":"T9.2","do":"Watch the GROUP and SUBGROUP knobs as it fires","expect":"They jump to match the new seed. The display's G## S## line updates too"},{"id":"T9.3","do":"Note the knob values, change them away, then dial them back by hand","expect":"The reseeded pattern returns exactly. This is the whole point — a seed you can hear but not dial in would be a dead end"},{"id":"T9.4","do":"Hold the RESEED input high continuously","expect":"Only one reseed happens — it is edge-triggered, not level-triggered"},{"id":"T9.5","do":"Unpatch RESEED","expect":"Nothing ever reseeds on its own"},{"id":"T9.6","do":"Fire RESEED 20 times","expect":"Different seeds, spread across the range — not the same few"},{"id":"T9.7","do":"Reseed, then save and reload the patch","expect":"The reseeded pattern comes back (it lives on the knobs)"}]},{"n":12,"title":"CV inputs – Task 10","status":"now","tests":[{"id":"T10.1","do":"Nothing patched into any CV input","expect":"Knobs behave exactly as in earlier sections. Unpatched is always a no-op"},{"id":"T10.2","do":"Slow LFO (0–10 V) → cvROOT","expect":"The key moves. Every note is still perfectly in tune at every point of the sweep — never a smear or a bent note"},{"id":"T10.3","do":"Turn the ROOT knob while cvROOT is patched","expect":"Nothing happens — it is an override, the knob is out of circuit until you unpatch"},{"id":"T10.4","do":"Constant 1 V into cvROOT (V/oct)","expect":"Names C — one octave up is the same pitch class"},{"id":"T10.5","do":"Slow LFO (0–10 V) → cvSCALE","expect":"Steps through all 13 positions. Clean jumps, no glitching, no silence"},{"id":"T10.6","do":"Hold cvSCALE near 0 V","expect":"Lands on position 0, unquantized — the CV can reach raw mode, which is why the switch could be folded into the knob"},{"id":"T10.7","do":"Slow LFO → cvSEED","expect":"Sweeps through patterns continuously. At the ends it wraps rather than sticking"},{"id":"T10.8","do":"Watch the knobs with cvSEED patched","expect":"GROUP/SUBGROUP stay where you left them — SEED is an offset, not an override"},{"id":"T10.9","do":"LFO → cvSLIDE, SLIDE knob at noon","expect":"Glide comes and goes. Steps the seed never flagged start gliding as the CV rises"},{"id":"T10.10","do":"SLIDE knob fully CCW, cvSLIDE still high","expect":"All glide stops. The attenuator always wins"},{"id":"T10.11","do":"Unplug each CV cable in turn while running","expect":"Each unplug hands control cleanly back to its knob. No stuck values"}]},{"n":13,"title":"Display – Task 11","status":"partial","tests":[{"id":"T11.1","do":"Read the three lines at GROUP 1 / SUBGROUP 1","expect":"1 . 1, BASS, C MINOR — the spec's group . subgroup format, no leading zeros"},{"id":"T11.2","do":"Turn GROUP and SUBGROUP","expect":"The first line tracks both"},{"id":"T11.3","do":"Cross the boundaries (GROUP 10→11, 21→22)","expect":"The zone line changes BASS → RAND → ARP↑"},{"id":"T11.4","do":"In the ARP zone, step SUBGROUP through 1, 9, 17, 25","expect":"The arrow changes: ARP↑, ARP↓, ARP↕, ARP↔"},{"id":"T11.5","do":"Turn ROOT and SCALE","expect":"The third line tracks both, e.g. G# DORIAN"},{"id":"T11.6","do":"SCALE to position 0","expect":"The line reads <root> RAW — it does not pretend to be a scale"},{"id":"T11.7","do":"Patch a CV into cvROOT or cvSCALE and sweep","expect":"The display follows the effective value, CV included"},{"id":"T11.8","do":"Fire RESEED","expect":"The display flashes amber briefly as the new seed lands"},{"id":"T11.9","do":"Look at the module in the browser (not placed in a rack)","expect":"Renders sensibly with no module attached — no crash, no blank"}]},{"n":14,"title":"Patch save – Task 12","status":"now","tests":[{"id":"T12.1","do":"Set a distinctive seed and knobs, save, quit Rack, reopen","expect":"Everything returns: knobs, seed, pattern"},{"id":"T12.2","do":"Reseed to a new pattern, then save and reload","expect":"The reseeded pattern returns — it lives on the knobs"},{"id":"T12.3","do":"Patch RUN, stop playback, save and reload","expect":"It comes back stopped. Run state is saved"},{"id":"T12.4","do":"Reload and start the clock","expect":"Playback starts from a predictable place. Step position is deliberately not saved"},{"id":"T12.5","do":"Load a patch saved before this build, if you have one","expect":"Knobs load without error. Note anything that sounds different and report it"}]},{"n":15,"title":"MetaModule hardware","status":"pending","tests":[{"id":"H.1","do":"Boot with the plugin installed","expect":"NZZL appears in the module list; no boot failure"},{"id":"H.2","do":"Load NZZL into a patch","expect":"Loads without error or hang"},{"id":"H.3","do":"Repeat §2–§14 on hardware","expect":"Same behaviour as in VCV Rack"},{"id":"H.4","do":"Same seed on hardware and in Rack, same knobs","expect":"Byte-identical pattern — same notes, same rhythm. This is the whole point of the deterministic design"},{"id":"H.5","do":"Check CPU load on the MetaModule","expect":"Headroom left for other modules"},{"id":"H.6","do":"Run 30 minutes","expect":"No crash, no audio glitching, no thermal issue"},{"id":"H.7","do":"Save and reload a hardware patch","expect":"Seed and knobs restore"},{"id":"H.8","do":"Read the display on the physical screen","expect":"Three lines render, update without flicker, and are legible. Untested — the text content is verified, the rendering is not"}]}]</script>
+<script>
+(function(){
+  "use strict";
+  var SECTIONS = JSON.parse(document.getElementById('test-data').textContent);
+  var TOTAL = SECTIONS.reduce(function(n,s){return n+s.tests.length;},0);
+  document.getElementById('ct').textContent = TOTAL + ' tests';
+  document.getElementById('n-left').textContent = TOTAL;
+
+  // ── state ────────────────────────────────────────────
+  var state = { results:{}, meta:{date:'',build:'',tester:''} };
+  var els = {};            // test id -> {row, btns, cmt}
+  var sectEls = [];
+  var filter = 'all';
+  var db = null, docRef = null, writeChain = Promise.resolve(), writeTimer = null, dirty = false;
+
+  function note(msg){
+    var n = document.getElementById('status');
+    if(!msg){ n.hidden = true; return; }
+    n.textContent = msg; n.hidden = false;
+  }
+
+  // ── build DOM once ───────────────────────────────────
+  var host = document.getElementById('sections');
+  SECTIONS.forEach(function(sec){
+    var s = document.createElement('section');
+    s.className = 'sect'; s.dataset.open = 'true';
+
+    var h = document.createElement('header');
+    h.tabIndex = 0; h.setAttribute('role','button');
+    h.innerHTML = '<span class="chev">▼</span>' +
+      '<span class="num">' + String(sec.n).padStart(2,'0') + '</span>' +
+      '<h2></h2>' +
+      (sec.status !== 'now' ? '<span class="flag hw">' +
+        (sec.status === 'pending' ? 'hardware' : 'rack only') + '</span>' : '') +
+      '<span class="count"></span>';
+    h.querySelector('h2').textContent = sec.title;
+    function toggle(){ s.dataset.open = s.dataset.open === 'true' ? 'false' : 'true'; }
+    h.addEventListener('click', toggle);
+    h.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); }
+    });
+    s.appendChild(h);
+
+    var ch = document.createElement('div');
+    ch.className = 'colhead';
+    ch.innerHTML = '<span>ID</span><span>Do</span><span>Expect</span><span>Result</span><span>Comments</span>';
+    s.appendChild(ch);
+
+    var rows = document.createElement('div');
+    rows.className = 'rows';
+    sec.tests.forEach(function(t){
+      var r = document.createElement('div');
+      r.className = 'row';
+
+      var id = document.createElement('div'); id.className = 'tid'; id.textContent = t.id;
+      var d  = document.createElement('div'); d.className = 'do'; d.textContent = t.do;
+      var e  = document.createElement('div'); e.className = 'exp'; e.textContent = t.expect;
+
+      var m = document.createElement('div'); m.className = 'mark';
+      var btns = {};
+      [['pass','Pass'],['fail','Fail'],['na','N/A']].forEach(function(p){
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'm-' + p[0]; b.textContent = p[1];
+        b.setAttribute('aria-pressed','false');
+        b.setAttribute('aria-label', p[1] + ' — ' + t.id);
+        b.addEventListener('click', function(){ mark(t.id, p[0]); });
+        btns[p[0]] = b; m.appendChild(b);
+      });
+
+      var c = document.createElement('textarea');
+      c.className = 'cmt'; c.rows = 1; c.placeholder = 'Notes…';
+      c.setAttribute('aria-label','Comments — ' + t.id);
+      c.addEventListener('input', function(){
+        entry(t.id).comment = c.value; dirty = true; queueWrite();
+      });
+
+      r.append(id, d, e, m, c);
+      rows.appendChild(r);
+      els[t.id] = { row:r, btns:btns, cmt:c, sec:sec.n };
+    });
+    s.appendChild(rows);
+    host.appendChild(s);
+    sectEls.push({ sec:sec, el:s, count:h.querySelector('.count') });
+  });
+
+  function entry(id){
+    if(!state.results[id]) state.results[id] = { status:'', comment:'' };
+    return state.results[id];
+  }
+
+  function mark(id, status){
+    var en = entry(id);
+    en.status = (en.status === status) ? '' : status;   // click again to clear
+    dirty = true;
+    apply();
+    queueWrite();
+  }
+
+  // ── render from state ────────────────────────────────
+  function apply(){
+    var n = { pass:0, fail:0, na:0 };
+    Object.keys(els).forEach(function(id){
+      var en = state.results[id] || { status:'', comment:'' };
+      var el = els[id];
+      el.row.dataset.status = en.status || '';
+      ['pass','fail','na'].forEach(function(k){
+        el.btns[k].setAttribute('aria-pressed', en.status === k ? 'true' : 'false');
+      });
+      if(document.activeElement !== el.cmt && el.cmt.value !== (en.comment || ''))
+        el.cmt.value = en.comment || '';
+      if(en.status) n[en.status]++;
+      var show = filter === 'all' ? true
+               : filter === 'todo' ? !en.status
+               : en.status === 'fail';
+      el.row.hidden = !show;
+    });
+    var left = TOTAL - n.pass - n.fail - n.na;
+    document.getElementById('n-pass').textContent = n.pass;
+    document.getElementById('n-fail').textContent = n.fail;
+    document.getElementById('n-na').textContent = n.na;
+    document.getElementById('n-left').textContent = left;
+
+    var rail = document.getElementById('rail');
+    rail.innerHTML = '';
+    [['s-pass',n.pass],['s-fail',n.fail],['s-na',n.na]].forEach(function(p){
+      if(!p[1]) return;
+      var sp = document.createElement('span');
+      sp.className = p[0];
+      sp.style.width = (p[1] / TOTAL * 100) + '%';
+      rail.appendChild(sp);
+    });
+
+    sectEls.forEach(function(se){
+      var done = 0, fails = 0;
+      se.sec.tests.forEach(function(t){
+        var st = (state.results[t.id] || {}).status;
+        if(st) done++;
+        if(st === 'fail') fails++;
+      });
+      se.count.textContent = done + '/' + se.sec.tests.length + (fails ? '  • ' + fails + ' fail' : '');
+      se.count.style.color = fails ? 'var(--fail)' :
+        (done === se.sec.tests.length ? 'var(--pass)' : 'var(--muted)');
+      var anyVisible = se.sec.tests.some(function(t){ return !els[t.id].row.hidden; });
+      se.el.hidden = !anyVisible;
+    });
+
+    var m = state.meta || {};
+    [['f-date','date'],['f-build','build'],['f-tester','tester']].forEach(function(p){
+      var inp = document.getElementById(p[0]);
+      if(document.activeElement !== inp && inp.value !== (m[p[1]] || ''))
+        inp.value = m[p[1]] || '';
+    });
+  }
+
+  // ── filters ──────────────────────────────────────────
+  [['f-all','all'],['f-todo','todo'],['f-bad','bad']].forEach(function(p){
+    document.getElementById(p[0]).addEventListener('click', function(){
+      filter = p[1];
+      ['f-all','f-todo','f-bad'].forEach(function(x){
+        document.getElementById(x).setAttribute('aria-pressed', x === p[0] ? 'true' : 'false');
+      });
+      apply();
+    });
+  });
+
+  [['f-date','date'],['f-build','build'],['f-tester','tester']].forEach(function(p){
+    document.getElementById(p[0]).addEventListener('input', function(e){
+      state.meta[p[1]] = e.target.value; dirty = true; queueWrite();
+    });
+  });
+
+  // ── report ───────────────────────────────────────────
+  document.getElementById('b-copy').addEventListener('click', function(){
+    var m = state.meta || {}, out = [];
+    var n = { pass:0, fail:0, na:0 };
+    Object.keys(state.results).forEach(function(k){
+      var st = state.results[k].status; if(st) n[st]++;
+    });
+    out.push('NZZL system test');
+    out.push('date: ' + (m.date || '—') + '   build: ' + (m.build || '—') +
+             '   tester: ' + (m.tester || '—'));
+    out.push('');
+    out.push(n.pass + ' pass / ' + n.fail + ' fail / ' + n.na + ' n a / ' +
+             (TOTAL - n.pass - n.fail - n.na) + ' unmarked   (of ' + TOTAL + ')');
+    out.push('');
+    SECTIONS.forEach(function(sec){
+      var done = 0, fails = [];
+      sec.tests.forEach(function(t){
+        var en = state.results[t.id] || {};
+        if(en.status) done++;
+        if(en.status === 'fail') fails.push('    ' + t.id + ' — ' + t.do +
+          (en.comment ? '\n      note: ' + en.comment : ''));
+      });
+      var tag = fails.length ? 'FAIL' : (done === sec.tests.length ? 'pass' : 'partial');
+      out.push('  ' + String(sec.n).padStart(2,'0') + '. ' + sec.title +
+               '  [' + tag + ' ' + done + '/' + sec.tests.length + ']');
+      if(fails.length) out.push(fails.join('\n'));
+    });
+    var notes = [];
+    SECTIONS.forEach(function(sec){
+      sec.tests.forEach(function(t){
+        var en = state.results[t.id] || {};
+        if(en.comment && en.status !== 'fail')
+          notes.push('  ' + t.id + ': ' + en.comment);
+      });
+    });
+    if(notes.length){ out.push(''); out.push('Other notes'); out.push(notes.join('\n')); }
+    var txt = out.join('\n');
+    var btn = document.getElementById('b-copy');
+    function done(ok){
+      btn.textContent = ok ? 'Copied' : 'Copy failed';
+      setTimeout(function(){ btn.textContent = 'Copy report'; }, 1600);
+    }
+    if(navigator.clipboard && navigator.clipboard.writeText)
+      navigator.clipboard.writeText(txt).then(function(){done(true);}, function(){done(false);});
+    else done(false);
+  });
+
+  // ── persistence ──────────────────────────────────────
+  function queueWrite(){
+    if(!docRef) return;
+    clearTimeout(writeTimer);
+    writeTimer = setTimeout(function(){
+      var body = { results: state.results, meta: state.meta, updatedAt: new Date().toISOString() };
+      writeChain = writeChain.then(function(){
+        return docRef.set(body).then(function(){ dirty = false; }, function(err){
+          note(err && err.code === 'invalid_argument'
+            ? 'This view cannot save marks — you have read-only access. Marking still works for this visit.'
+            : 'Could not save the last change. Your marks are still on screen; keep a copy before closing.');
+        });
+      });
+    }, 500);
+  }
+
+  apply();   // render at rest, before any capability resolves
+
+  (async function(){
+    try{
+      db = await claude.use('db');
+    }catch(e){ db = null; }
+    if(!db){
+      note('Marks are not being saved in this view — they will be lost on reload. Use “Copy report” before you close the page.');
+      return;
+    }
+    docRef = db.doc('runs/current');
+    docRef.onSnapshot(function(snap){
+      if(snap.metadata.hasPendingWrites || dirty) return;   // don't clobber local edits
+      var d = snap.exists ? snap.data() : null;
+      if(!d) return;
+      state.results = d.results || {};
+      state.meta = d.meta || { date:'', build:'', tester:'' };
+      apply();
+    }, function(err){
+      note(err && err.code === 'revoked'
+        ? 'Saving stopped for this session. Copy the report before closing.'
+        : 'Live saving is unavailable right now. Copy the report before closing.');
+    });
+  })();
+})();
+</script>
