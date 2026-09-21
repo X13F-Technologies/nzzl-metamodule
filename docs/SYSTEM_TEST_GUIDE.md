@@ -3,6 +3,12 @@
 The acceptance procedure for the whole module. Work through it in VCV Rack 2
 (Parts 1–6), then on MetaModule hardware (Part 7).
 
+**There is a click-through version of this guide** that records pass/fail and
+comments and produces the sign-off report for you:
+**https://claude.ai/artifact/LLLB9bmgk1dhRhW4MCKJoP** — built from this file by
+`tools/build_test_bench.py`, so it can never drift from it. Rebuild and
+republish it after changing this guide.
+
 **What this guide is for.** The native harness (`./tests/run_tests.sh`) proves
 that pattern *generation* and pitch *quantization* are correct — it checks
 millions of cases that no human could audit by ear. It cannot see a single
@@ -529,3 +535,6 @@ enough to reproduce anything this module does.
   worse than none.
 - Per-task Claude/user split lives in [DESIGN.md](DESIGN.md) § Per-task test
   plan; task status lives in § Implementation status.
+- After any change here, run `python3 tools/build_test_bench.py` and republish
+  the artifact — otherwise the click-through version goes stale.
+- What the module currently does is [SPEC_AS_BUILT.md](SPEC_AS_BUILT.md).

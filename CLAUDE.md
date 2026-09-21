@@ -8,6 +8,12 @@ developed and tested locally as a VCV Rack 2 plugin.
 (https://github.com/X13F-Technologies/x13f-backlog). Update that item's status
 there when this project's status changes.
 
+**What the module currently is:** [docs/SPEC_AS_BUILT.md](docs/SPEC_AS_BUILT.md)
+— the specification as built, in the same order as the original requirements,
+with a full table of where and why the two differ. Update it when behaviour
+changes. [docs/HANDOFF_SPEC.md](docs/HANDOFF_SPEC.md) is the original
+requirements and is **frozen** — never edit it to match the build.
+
 **Full manual acceptance procedure:** [docs/SYSTEM_TEST_GUIDE.md](docs/SYSTEM_TEST_GUIDE.md)
 — the numbered test IDs (T5.9, T4.4, …) to cite when asking the user to test
 something, and the acceptance criteria for tasks not yet built.
@@ -77,6 +83,10 @@ Rules:
 - Write manual steps as references to test IDs in
   [docs/SYSTEM_TEST_GUIDE.md](docs/SYSTEM_TEST_GUIDE.md) where they already
   exist, and add new ones to that guide rather than inventing ad-hoc steps.
+- After changing that guide, run `python3 tools/build_test_bench.py` to
+  rebuild `docs/test-bench.html` from it, then republish the artifact at
+  https://claude.ai/artifact/LLLB9bmgk1dhRhW4MCKJoP so the click-through
+  version does not drift from the guide.
 - Do not mark a task ✅ in the DESIGN.md status table until the user
   confirms the manual portion.
 
