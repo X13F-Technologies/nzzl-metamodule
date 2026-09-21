@@ -234,7 +234,7 @@ switch) and **1–12 are the handoff spec's twelve scales, in its order**.
 | T5.9 | **Contour check.** Note the melodic *shape* at Natural Minor — where it rises, where it falls. Now switch to Minor Pentatonic, then Major | The **shape survives** — the same steps are still the high points and low points. Only the colour changes. *(This is why the mapping is proportional rather than modulo; if the melody scrambles on a scale change, that's a real bug.)* |
 | T5.10 | SCALE = Pentatonic Minor, then Whole Tone | Pentatonic: fewer distinct pitches, more repeats (5 degrees). Whole tone: no semitones anywhere, deliberately unsettled |
 | T5.11 | SCALE = Chromatic | All 12 semitones available; sounds least "composed" of the quantized positions |
-| T5.11b | **Judgement call, not pass/fail.** Live with the folded-in knob for a few minutes | Does losing the ability to A/B straight back to your scale bother you in practice? If it does, the switch can come back — say so |
+| T5.11b | Live with the folded-in knob for a few minutes | **Settled 2026-09-21** — this approach is confirmed. Still worth noticing if it gets in the way while playing; if it does, say so and the switch can come back |
 
 ### 6.3 Root
 
@@ -511,7 +511,6 @@ Musical judgement (not pass/fail — opinions wanted):
   Do the seed zones sound useful? ________________________________
   Is DENSITY's response musical?  ________________________________
   Is the scale list the right 12? ________________________________
-  Does raw-as-position-0 beat a separate switch? _________________
   Is the BASS zone convincingly acid? ____________________________
   Are the 303 shaping rates right (runs, ties, octave jumps)? ____
   Is 1–200% the right GATE range? _________________________________

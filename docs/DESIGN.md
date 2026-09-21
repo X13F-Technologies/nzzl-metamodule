@@ -267,6 +267,14 @@ All four open questions from the original deferral list are now settled.
   display across the top. The position freed by SCALE LOCK is left empty
   deliberately; an empty slot is cheaper than a control nobody uses.
 
+**Settled 2026-09-21:** folding SCALE LOCK into the SCALE knob is confirmed
+as the approach. It can be revisited if it proves awkward in practice, but it
+is no longer an open question.
+
+Ideas parked for later — pitch offset, slide slope, swing — live in
+[SPEC_AS_BUILT.md § Future additions to consider](SPEC_AS_BUILT.md#future-additions-to-consider),
+not here, so this file stays about decisions already made.
+
 ### Still open
 
 - **Whether folding SCALE LOCK into the SCALE knob was right.** Costs the

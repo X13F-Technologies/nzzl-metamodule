@@ -177,9 +177,50 @@ DENSITY stays exactly linear.
 **Ties.** 32 % of steps. **Gates.** Short and mid only — ties do the work
 long gates would otherwise do. **Accents.** 28 % on the high layer.
 
-Measured across the zone: 63 % of notes are immediately followed by another
-(random zone: 34 %), 55 % root, and **100 distinct rhythms across 320 seeds at
-DENSITY 4**.
+#### The shaping rates
+
+Every one of these is a named constant at the top of `pattern.hh`. They are
+the dials that decide whether the zone sounds like acid, and they were set by
+reasoning rather than by listening — expect to move them.
+
+| Constant | Value | What it does | Turn it up | Turn it down |
+|---|---|---|---|---|
+| `BASS_DOWNBEAT_CHANCE` | 0.85 | How often step 1 is the *first* note to appear as DENSITY rises | Every seed anchors on the one; safer, more samey | More seeds start off-beat; less grounded, more variety |
+| `BASS_RUNS` | 4 | How many separate bursts of consecutive sixteenths each seed gets | Busier, more continuous sixteenth motion | Sparser, more rests, more space |
+| `BASS_RUN_MIN` / `BASS_RUN_SPAN` | 2 / 3 → runs of 2–4 | How long each burst is | Longer unbroken sixteenth runs | Choppier, more stabs than runs |
+| `BASS_SLIDE_CHANCE` | 0.32 | Share of steps that tie into the next note | More legato, more classic acid glide | More articulated and separate |
+| `BASS_ACCENT_CHANCE` | 0.28 | Share of notes on the high velocity layer | More aggressive, more filter movement downstream | Flatter, more even |
+| `BASS_OCTAVE_UP` | 0.18 | Share of notes jumped up an octave | Wilder, more range | Stays in the low register |
+| Pitch weights | 55 / 15 / 12 / 10 / 8 % | Root / fifth / third / seventh / fourth | — | — |
+| Gate mix | 65 % short, 35 % mid | Which of the three note lengths a bass step uses | — | — |
+
+Measured over all 320 bass seeds (5120 notes), the realized rates match:
+85.3 % downbeat, 32.6 % ties, 27.3 % accent, 17.7 % octave-up, 64.1 % short
+gates, and 54.8 / 15.0 / 11.3 / 10.5 / 8.5 % on the five pitch degrees.
+
+**Velocity layers** come out 27 % high / 53 % low / 20 % off, so roughly one
+note in five is a quiet ghost note — which is where a lot of the groove lives.
+
+#### How the rhythm is actually assembled
+
+Worth understanding before touching the constants, because the ordering is
+what makes DENSITY musical rather than arbitrary:
+
+1. A **priority order** of the sixteen step positions is built per seed:
+   the downbeat first (85 %), then the four runs in the order they were
+   generated, then every position not yet claimed.
+2. Weights 1–16 are laid along that order.
+3. DENSITY N therefore plays **the first N entries of the priority order**.
+
+So turning DENSITY up walks down the seed's own priority list: the downbeat,
+then the heads and bodies of its runs, then the leftovers.
+
+> **Known limitation.** The runs claim **8.7 of 16 positions on average**, so
+> from roughly DENSITY 9 upward the remaining notes fill in **ascending step
+> order** rather than musically. At those densities nearly everything is
+> playing anyway, so it is hard to hear — but it is why the distinct-rhythm
+> counts flatten out above density 6. If the high end ever sounds mechanical,
+> this is the cause.
 
 ### Random — groups 11–21
 
@@ -416,16 +457,101 @@ stays *more* constrained than the random zone, so over-correcting fails too.
 
 ---
 
+## Future additions to consider
+
+**Nothing here is built, and nothing here should be built until asked for.**
+This section exists so ideas stop living in chat. Each entry records enough
+design thinking that picking it up later does not mean re-deriving it.
+
+### 1. PITCH OFFSET knob — *identified as a real gap*
+
+**The gap.** OCTAVE RANGE controls how many octaves the pattern *spans*, but
+nothing controls where that span *starts*. The pattern always begins at the
+base octave. ROOT changes the key, not the register, and it only moves within
+one octave. So there is currently no way to say "same pattern, higher up".
+
+**The requirement:** the offset must be applied **pre-quantization**. That is
+the important part — it means the offset shifts the raw pitch value *before*
+the scale lookup, so the result is always still in key. A post-quantization
+offset would add semitones to an already-quantized note and walk it out of
+the scale, which is exactly the failure the ROOT invariant exists to prevent.
+
+**One design question to settle before building it.** "Starting point" could
+mean either of two things, and they feel different to play:
+
+| | Offset in **octaves** | Offset in **scale degrees** |
+|---|---|---|
+| What it does | Moves the whole span up/down by whole octaves | Moves the pattern up/down *through the scale* |
+| Quantization | Unaffected — octaves are scale-invariant | Must happen pre-quantization, as specified |
+| Feels like | A register control | A melodic transposition that stays in key |
+| Range | roughly −2 … +2 octaves | roughly −7 … +7 degrees |
+
+The "pre-quantization" instruction points at **scale degrees**, since octaves
+would not need the caveat. A combined coarse/fine (octaves + degrees) is also
+possible but costs two panel positions.
+
+**Implementation notes.** Applies in `scales.hh`, where `degreeForIndex()`
+already turns a raw index into a degree — the offset would be added there,
+before `intervals[]` is indexed, with the overflow rolling into the octave.
+`octaveForStep()` handles the octave half. Needs a panel position and,
+probably, a CV input to be worth having.
+
+### 2. Slide slope — exponential ↔ logarithmic
+
+Slides are currently a **linear ramp**. That was a deliberate choice: linear
+arrives exactly (so the note lands precisely in tune), cannot overshoot, and
+"reaches its target within the slide time" is a property a test can assert.
+
+A real 303's slide is not linear — it is the filter/VCO circuit's own curve,
+closer to exponential. A knob morphing the curve from logarithmic (fast
+attack, slow settle) through linear to exponential (slow start, rushing
+arrival) would be a genuine feel control.
+
+**What to preserve when building it.** The arrival guarantee. Whatever the
+curve, it must still land *exactly* on the quantized target within the slide
+time and never overshoot — otherwise notes end up out of tune and
+`test_slide_reaches_target` stops being provable. A shaped interpolation of
+the existing `slideProgress` (`pow(t, k)` with k from the knob) keeps both
+properties, since `t = 1` maps to `1` for every k.
+
+### 3. Swing within seeds
+
+All active steps currently land on even clock subdivisions — the handoff spec
+says so explicitly, and the seed decides *which* steps play, never *when*.
+
+Swing would delay every other sixteenth by a fraction of a step. Two possible
+shapes:
+
+- **A swing knob** — global, 50 % (straight) to ~66 % (hard shuffle). Simple,
+  predictable, and what most sequencers do.
+- **Seed-derived swing** — each seed carries its own swing amount, so groove
+  becomes part of a pattern's identity rather than a separate setting. This
+  is what "within seeds" suggests, and it is the more interesting version.
+
+The two combine well: seed-derived swing with a knob that scales it, exactly
+as SLIDE already attenuates the seed's own slide flags.
+
+**Implementation notes.** This is the one idea here that touches the
+determinism story. Swing is a *timing* offset, so it has to live in
+`engine.hh` as a delay applied between the clock edge and the step firing —
+which means the engine gains a pending-step timer it does not currently have.
+Gate duration and slide time are both derived from the step duration, so both
+would need to account for a shifted step boundary. Worth scoping carefully;
+it is a bigger change than it sounds.
+
+---
+
 ## Open questions
 
-Three things want a human opinion rather than a test:
+**Settled 2026-09-21: SCALE LOCK stays folded into the SCALE knob.** The
+approach is confirmed; if it proves awkward in practice the switch can come
+back, but it is no longer an open question.
 
-1. **Was folding SCALE LOCK into the SCALE knob right?** It costs the ability
-   to A/B back to your scale. Test T5.11b.
-2. **Are the 303 shaping rates right?** Run count, run length, root
-   dominance, tie rate and octave-jump rate are all constants at the top of
-   `pattern.hh`. They were set by reasoning, not by listening. Test T8.15.
-3. **Are the GATE and ACCENT ranges right?** 1–200 % and 0–100 %. Test G.10.
+Two things still want a human opinion rather than a test:
+
+1. **Are the 303 shaping rates right?** See § The shaping rates above. They
+   were set by reasoning, not by listening. Test T8.15.
+2. **Are the GATE and ACCENT ranges right?** 1–200 % and 0–100 %. Test G.10.
 
 And one thing genuinely blocked: **the display's rendering on hardware is
 unverified.** The text content is tested for all 1024 seeds; whether
