@@ -72,7 +72,7 @@ Audio-8.
 
 **NZZL knobs**
 `GROUP 1 · SUBGROUP 1 · DENSITY 8 · LENGTH 16 · CLK DIV 1 · OCT RANGE 2 ·
-ROOT C · SCALE Natural Minor · SLIDE 0`
+ROOT C · SCALE Natural Minor · SLIDE 0 · GATE 100% · ACCENT 100%`
 
 The panel is three columns — controls left, jacks middle, outputs bottom
 right — with a three-line display across the top showing the seed, the zone
@@ -107,8 +107,8 @@ meaningful.
 | ID | Do | Expect |
 |---|---|---|
 | S.1 | Add NZZL to a rack | Module appears, no Rack crash, no red "failed to load" panel |
-| S.2 | Look at the panel | 9 knobs, 7 input jacks, 3 output jacks, all labelled, nothing overlapping or off the edge. The knob position to the right of SLIDE is intentionally empty |
-| S.2b | Look at the display | Three lines: `G01 S01`, `BASS`, `C MINOR`. Legible, not clipped |
+| S.2 | Look at the panel | 11 knobs, 7 input jacks, 3 output jacks, all labelled, nothing overlapping or off the edge |
+| S.2b | Look at the display | Three lines: `1 . 1`, `BASS`, `C MINOR`. Legible, not clipped |
 | S.3 | Start the LFO clock | Gate LED activity on the Scope; you hear notes |
 | S.4 | Let it run 60 s | No dropouts, no clicks on every note, no runaway CPU (right-click module → CPU meter stays low) |
 | S.5 | Remove and re-add the module | No crash |
@@ -205,27 +205,28 @@ machine-verified over 11.8 million cases; what you're testing is that the
 
 ### 6.2 The SCALE knob
 
-Twelve positions. **Position 0 is Unquantized** — it replaced the old SCALE
-LOCK switch, so this one knob covers raw mode *and* every scale.
+Thirteen positions: **0 is Unquantized** (it replaced the old SCALE LOCK
+switch) and **1–12 are the handoff spec's twelve scales, in its order**.
 
 | # | Position | # | Position |
 |---|----------|---|----------|
-| **0** | **Unquantized** | 6 | Phrygian Dominant |
-| 1 | Chromatic | 7 | Lydian |
-| 2 | Major | 8 | Mixolydian |
-| 3 | Natural Minor *(default)* | 9 | Harmonic Minor |
-| 4 | Dorian | 10 | Melodic Minor |
-| 5 | Phrygian | 11 | Minor Pentatonic |
+| **0** | **Unquantized** | 7 | Harmonic Minor |
+| 1 | Major | 8 | Melodic Minor |
+| 2 | Natural Minor *(default)* | 9 | Pentatonic Major |
+| 3 | Dorian | 10 | Pentatonic Minor |
+| 4 | Phrygian | 11 | Chromatic |
+| 5 | Mixolydian | 12 | Whole Tone |
+| 6 | Lydian | | |
 
 | ID | Do | Expect |
 |---|---|---|
 | T5.4 | SCALE = Natural Minor, ROOT = C | Every note is in C minor. Play a C minor chord against it — nothing clashes |
 | T5.5 | SCALE = **position 0 (Unquantized)** | Notes go audibly **microtonal** — clearly between the keys, sour on purpose. Not silence, not chaos |
 | T5.6 | Sweep position 0 → 1 → 0 repeatedly | Snaps cleanly between detuned and in-tune. Same rhythm either way |
-| T5.7 | Step SCALE through all 12 positions | Positions 1–11 are all in tune. Tooltips read exactly as the table above |
+| T5.7 | Step SCALE through all 13 positions | Positions 1–12 are all in tune. Tooltips read exactly as the table above |
 | T5.8 | Listen for character as you sweep | Major bright, Minor dark, Phrygian Dominant "Spanish", Chromatic anything-goes. They should be **distinguishable by ear** |
 | T5.9 | **Contour check.** Note the melodic *shape* at Natural Minor — where it rises, where it falls. Now switch to Minor Pentatonic, then Major | The **shape survives** — the same steps are still the high points and low points. Only the colour changes. *(This is why the mapping is proportional rather than modulo; if the melody scrambles on a scale change, that's a real bug.)* |
-| T5.10 | SCALE = Minor Pentatonic | Fewer distinct pitches, more repeated notes than a 7-note scale. Expected — it only has 5 degrees |
+| T5.10 | SCALE = Pentatonic Minor, then Whole Tone | Pentatonic: fewer distinct pitches, more repeats (5 degrees). Whole tone: no semitones anywhere, deliberately unsettled |
 | T5.11 | SCALE = Chromatic | All 12 semitones available; sounds least "composed" of the quantized positions |
 | T5.11b | **Judgement call, not pass/fail.** Live with the folded-in knob for a few minutes | Does losing the ability to A/B straight back to your scale bother you in practice? If it does, the switch can come back — say so |
 
@@ -253,35 +254,38 @@ LOCK switch, so this one knob covers raw mode *and* every scale.
 
 ### 6.5 Known-good reference data
 
-Set **GROUP 1 · SUBGROUP 1 · SCALE Natural Minor (position 3) · ROOT C ·
-OCT RANGE 2 · SLIDE 0**, then use CLK DIV or a slow clock to walk the pattern
+Set **GROUP 1 · SUBGROUP 1 · SCALE Natural Minor (position 2) · ROOT C ·
+OCT RANGE 2 · SLIDE 0 · GATE 100% · ACCENT 100%**, then use CLK DIV or a slow clock to walk the pattern
 one step at a time. Read CV PITCH on the Scope.
 
-> GROUP 1 is in the **BASS** zone, so these numbers include Task 8's style
-> shaping — that is why weights 2, 3 and 4 sit on beats and so many notes are
-> C or G. Regenerate the table whenever the generator changes.
+> GROUP 1 is in the **BASS** zone, so these numbers are a 303 line: the
+> downbeat leads, a tied run sits at steps 11–14, and the pitches are almost
+> all root (C) and fifth (G). `―` in the Tie column means that step slides
+> into the next and its gate does not drop.
+>
+> Note lengths for this pattern: 0.23 / 0.52 / 0.72 of a step
 
 These are the exact values the code produces for seed index 0. `●` = the step
 plays at that DENSITY. Note names assume 0 V = C4, VCO at default tune.
 
-| Step | Weight | On @ D4 | On @ D8 | Gate len | Vel (V) | **Pitch (V)** | Note |
-|---|---|---|---|---|---|---|---|
-| 1 | 8 | · | ● | 0.34 | 5.70 | +0.583 | G4 |
-| 2 | 1 | ● | ● | 0.39 | 9.04 | +1.000 | C5 |
-| 3 | 5 | · | ● | 0.13 | 0.19 | +1.000 | C5 |
-| 4 | 9 | · | · | 0.27 | 6.95 | +1.000 | C5 |
-| 5 | 3 | ● | ● | 0.52 | 2.36 | +0.167 | D4 |
-| 6 | 11 | · | · | 0.49 | 5.97 | +1.000 | C5 |
-| 7 | 14 | · | · | 0.57 | 3.08 | +1.167 | D5 |
-| 8 | 15 | · | · | 0.31 | 5.19 | +1.583 | G5 |
-| 9 | 2 | ● | ● | 0.21 | 2.98 | +1.000 | C5 |
-| 10 | 16 | · | · | 0.12 | 2.55 | +1.583 | G5 |
-| 11 | 7 | · | ● | 0.25 | 5.91 | +1.250 | D#5 |
-| 12 | 12 | · | · | 0.22 | 9.17 | +1.000 | C5 |
-| 13 | 4 | ● | ● | 0.18 | 6.68 | +1.667 | G#5 |
-| 14 | 10 | · | · | 0.11 | 2.56 | +1.417 | F5 |
-| 15 | 6 | · | ● | 0.41 | 4.70 | +1.583 | G5 |
-| 16 | 13 | · | · | 0.37 | 9.82 | +1.000 | C5 |
+| Step | Weight | On @ D4 | On @ D8 | Gate | Tie | Vel (V) | **Pitch (V)** | Note |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 1 | ● | ● | 0.23 | ― | 5.50 | +0.583 | G4 |
+| 2 | 5 | · | ● | 0.23 |   | 10.00 | +0.583 | G4 |
+| 3 | 6 | · | ● | 0.52 |   | 10.00 | +0.000 | C4 |
+| 4 | 10 | · | · | 0.52 |   | 10.00 | +0.000 | C4 |
+| 5 | 11 | · | · | 0.23 |   | 5.50 | +0.583 | G4 |
+| 6 | 12 | · | · | 0.52 |   | 5.50 | +0.833 | A#4 |
+| 7 | 13 | · | · | 0.23 |   | 5.50 | +0.583 | G4 |
+| 8 | 14 | · | · | 0.23 |   | 5.50 | +0.583 | G4 |
+| 9 | 15 | · | · | 0.23 |   | 5.50 | +0.000 | C4 |
+| 10 | 16 | · | · | 0.23 |   | 5.50 | +0.250 | D#4 |
+| 11 | 2 | ● | ● | 0.52 | ― | 10.00 | +0.000 | C4 |
+| 12 | 3 | ● | ● | 0.23 | ― | 10.00 | +0.000 | C4 |
+| 13 | 4 | ● | ● | 0.52 | ― | 10.00 | +0.000 | C4 |
+| 14 | 7 | · | ● | 0.23 | ― | 10.00 | +0.583 | G4 |
+| 15 | 8 | · | ● | 0.23 |   | 5.50 | +0.417 | F4 |
+| 16 | 9 | · | · | 0.23 |   | 10.00 | +0.583 | G4 |
 
 Regenerate this table any time the generator changes — the tool prints it as
 markdown, ready to paste back in, plus two more seeds:
@@ -316,39 +320,76 @@ Watch CV PITCH on the Scope. Roughly 1 step in 4 is flagged for slide.
 | T7.1 | SLIDE fully CCW (0) | Pitch changes are **instantaneous** — a clean staircase, no ramps at all |
 | T7.2 | SLIDE to about halfway | Some notes now **glide** into pitch; others still jump. Only flagged steps slide |
 | T7.3 | SLIDE fully CW | Glides are longer, but every one still **arrives before the next note** — no smearing across steps |
+| T7.3b | **A slide is a tie.** Watch GATE on the scope through a slid note | The gate **does not drop** between a slid note and the next one — they join into one long gate. Two separate gates with a glide between them is the wrong sound |
 | T7.4 | Watch a glide on the Scope | A straight ramp that settles exactly on the target and stays flat. No overshoot, no wobble at the end |
 | T7.5 | Halve the clock rate, SLIDE unchanged | Glides get **proportionally longer** — the feel survives a tempo change |
 | T7.6 | Return SLIDE to 0 mid-glide | Later notes jump again immediately |
 | T7.7 | Listen with SLIDE up | Should read as portamento/303-style glide, not as being out of tune |
+| T7.8 | Patch an LFO into **cvSLIDE** with the SLIDE knob at noon | Glide comes and goes. Notes the seed never flagged start sliding too — that is intended |
+| T7.9 | Turn SLIDE fully **CCW** with cvSLIDE still patched and high | **All glide stops.** The attenuator wins over the CV, always |
 
 ---
 
 ## 9. Style zones **[NOW]** — Task 8
 
-The GROUP knob is now three zones. **This is the section where your ear is the
-only instrument that counts** — the harness proved the statistics, not the
-music.
+The GROUP knob is three zones, and inside ARP the SUBGROUP knob picks the
+direction. **This is the section where your ear is the only instrument that
+counts** — the harness proved the statistics, not the music.
 
 | GROUP | Zone | Display | Character |
 |---|---|---|---|
-| 1–10 | Bassline | `BASS` | Notes on the beat, root/fifth heavy, short punchy gates |
-| 11–22 | Random | `RAND` | The unshaped generator — anything goes |
-| 23–32 | Arpeggio | `ARP` | Stepwise runs of four, even mid-length gates |
+| 1–10 | Acid bass | `BASS` | 303-style: runs of sixteenths, ties, root hammering, octave jumps |
+| 11–21 | Random | `RAND` | The unshaped generator — anything goes |
+| 22–32 | Arpeggio | `ARP↑ ↓ ↕ ↔` | Ordered runs; SUBGROUP 1–8 up, 9–16 down, 17–24 up-down, 25–32 down-up |
+
+### 9.1 The acid zone
 
 | ID | Do | Expect |
 |---|---|---|
-| T8.1 | GROUP 3, DENSITY 4 | Notes land **on the beat**. Should feel like a bassline, not a scatter |
-| T8.2 | GROUP 3, sweep DENSITY 1→8 | The first notes to appear are the on-beat ones; off-beats fill in after |
-| T8.3 | GROUP 16 (RAND), DENSITY 4 | Noticeably more scattered than GROUP 3 |
-| T8.4 | GROUP 28 (ARP) | Runs of notes that **walk up or down** rather than leaping around |
-| T8.5 | Step GROUP 3 → 16 → 28 at fixed SUBGROUP | The three zones are **distinguishable by ear** without looking at the knob |
-| T8.6 | Compare gate character across zones | BASS shortest and punchiest, RAND most varied, ARP most even |
-| T8.7 | Cross a zone boundary: GROUP 10 → 11, then 22 → 23 | Character changes at the boundary. The display's zone line changes to match |
-| T8.8 | **Judgement call.** Do the zones earn their place? | Are 10/12/10 the right sizes? Is BASS bassy enough? Is ARP arpy enough? Opinions wanted |
+| T8.1 | GROUP 3, DENSITY 6, SLIDE up, a resonant low-pass after the VCO | It should sound like an **acid line** — sixteenth runs, notes gliding into each other, the root hammered |
+| T8.2 | **The one that was broken.** GROUP 1, DENSITY 4. Note which steps play. Now step GROUP 2, 3, 4 … 10 at the same density | **Each group plays a different rhythm.** They must not all land on the same four positions in the bar |
+| T8.3 | Same again at DENSITY 2, then 6 | Still varied. At 2 most seeds start on the downbeat — that is intended, not a collapse |
+| T8.4 | GROUP 3, sweep DENSITY 1→8 | Notes fill in as **runs** — new notes tend to sit next to existing ones rather than scatter |
+| T8.5 | Listen to the pitches in any bass seed | Dominated by the **root**, with the fifth next. Should feel hypnotic and repetitive, not melodic |
+| T8.6 | Listen for **octave jumps** | Occasional notes an octave up. Roughly one note in five |
+| T8.7 | Set OCT RANGE 1, then 5, in a bass seed | The octave jumps stay **one octave** at range 5 — they do not grow into four-octave leaps |
+
+### 9.2 The other zones
+
+| ID | Do | Expect |
+|---|---|---|
+| T8.8 | GROUP 16 (RAND), DENSITY 4 | Noticeably more scattered than any bass seed. No root hammering |
+| T8.9 | GROUP 24, SUBGROUP 3 (`ARP↑`) | Pitches **walk upward** through the pattern |
+| T8.10 | Same group, SUBGROUP 11 (`ARP↓`) | Pitches walk **downward** |
+| T8.11 | SUBGROUP 19 (`ARP↕`) | Up through the first half, back **down** through the second |
+| T8.12 | SUBGROUP 27 (`ARP↔`) | Down first, then back up |
+| T8.13 | Any arp seed with SLIDE up | Arps **never glide** — slide is a bass/random thing |
+| T8.14 | Cross the boundaries: GROUP 10→11, then 21→22 | Character changes at the boundary. The zone line changes to match |
+| T8.15 | **Judgement call.** Do the zones earn their place? | Is BASS convincingly acid? Are 10/11/11 groups the right split? Opinions wanted |
 
 ---
 
-## 10. Reseed **[NOW]** — Task 9
+## 10. Gate and Accent **[NOW]**
+
+Two knobs that scale a small generated set rather than editing per-step
+values. Each pattern has **three note lengths** and **three velocity layers**.
+
+| ID | Do | Expect |
+|---|---|---|
+| G.1 | GATE 100%, DENSITY 16, watch GATE on the scope | Note lengths vary, but only between **three distinct values** — not sixteen different ones |
+| G.2 | Sweep GATE 100% → 1% | Everything gets shorter together, staying in proportion. At the bottom, tight clicks |
+| G.3 | Sweep GATE 100% → 200% | Notes lengthen. Around and past 100% the **long** notes start tying into the next step while the **short** ones stay staccato |
+| G.4 | GATE 200%, listen | A partly-legato line, not a solid drone. If every note ties, that is wrong |
+| G.5 | Change seed at GATE 150% | The three lengths change with the seed; the knob keeps its proportion |
+| G.6 | ACCENT 100%, VELOCITY into a VCA | Clear loud/medium/quiet contrast between notes |
+| G.7 | Sweep ACCENT 100% → 0% | Contrast flattens. At 0 **every note is the same level** |
+| G.8 | ACCENT 0, watch VELOCITY on the scope | A flat line — it must not wander |
+| G.9 | Bass seed, ACCENT 100% | Accents should fall in a way that reinforces the groove, roughly one note in four |
+| G.10 | **Judgement call** | Is 1–200% the right GATE range? Does ACCENT 100 give enough contrast, or too much? |
+
+---
+
+## 11. Reseed **[NOW]** — Task 9
 
 Patch a manual trigger (or an LFO) into RESEED.
 
@@ -364,41 +405,46 @@ Patch a manual trigger (or an LFO) into RESEED.
 
 ---
 
-## 11. CV inputs **[NOW]** — Task 10
+## 12. CV inputs **[NOW]** — Task 10
 
-**Every CV input is an offset on its knob, not an absolute value.** The knob
-sets the base; the CV moves you from there.
+**The four jacks are not all the same**, and the handoff spec is what decides
+which is which: SCALE and ROOT are **overrides** (patched, the voltage wins
+and the knob is ignored), SEED is an **offset** on its knobs, and SLIDE is
+**summed with the seed's own slide flag and then attenuated by the knob**.
 
 | ID | Do | Expect |
 |---|---|---|
 | T10.1 | Nothing patched into any CV input | Knobs behave exactly as in earlier sections. Unpatched is always a no-op |
-| T10.2 | Slow LFO (±5 V) → **cvROOT** | The key transposes up and down. **Every note is still perfectly in tune** at every point of the sweep — never a smear or a bent note |
-| T10.3 | Turn the ROOT knob while cvROOT is patched | Knob and CV **add**. The knob still does something |
-| T10.4 | Constant 1 V into cvROOT (V/oct) | Transposes exactly **one octave** — i.e. back to the same root |
-| T10.5 | Slow LFO → **cvSCALE** | Steps through scale positions. Clean jumps between scales, no glitching, no silence |
-| T10.6 | Large negative CV into cvSCALE | Reaches position 0 and **clamps** there — it stops at unquantized, never wraps around to Minor Pentatonic |
+| T10.2 | Slow LFO (0–10 V) → **cvROOT** | The key moves. **Every note is still perfectly in tune** at every point of the sweep — never a smear or a bent note |
+| T10.3 | Turn the ROOT knob while cvROOT is patched | **Nothing happens** — it is an override, the knob is out of circuit until you unpatch |
+| T10.4 | Constant 1 V into cvROOT (V/oct) | Names C — one octave up is the same pitch class |
+| T10.5 | Slow LFO (0–10 V) → **cvSCALE** | Steps through all 13 positions. Clean jumps, no glitching, no silence |
+| T10.6 | Hold cvSCALE near 0 V | Lands on **position 0, unquantized** — the CV can reach raw mode, which is why the switch could be folded into the knob |
 | T10.7 | Slow LFO → **cvSEED** | Sweeps through patterns continuously. At the ends it **wraps** rather than sticking |
-| T10.8 | Watch the knobs with cvSEED patched | GROUP/SUBGROUP stay where you left them — CV SEED does not move them, it offsets from them |
-| T10.9 | LFO → **cvSLIDE** | Glide amount modulates; at 0 V it matches the knob alone |
-| T10.10 | Unplug each CV cable in turn while running | Each unplug returns cleanly to the knob value. No stuck offsets |
+| T10.8 | Watch the knobs with cvSEED patched | GROUP/SUBGROUP **stay where you left them** — SEED is an offset, not an override |
+| T10.9 | LFO → **cvSLIDE**, SLIDE knob at noon | Glide comes and goes. Steps the seed never flagged start gliding as the CV rises |
+| T10.10 | SLIDE knob fully CCW, cvSLIDE still high | **All glide stops.** The attenuator always wins |
+| T10.11 | Unplug each CV cable in turn while running | Each unplug hands control cleanly back to its knob. No stuck values |
 
 ---
 
-## 12. Display **[NOW in Rack, PENDING on hardware]** — Task 11
+## 13. Display **[NOW in Rack, PENDING on hardware]** — Task 11
 
 | ID | Do | Expect |
 |---|---|---|
-| T11.1 | Read the three lines at GROUP 1 / SUBGROUP 1 | `G01 S01`, `BASS`, `C MINOR` |
-| T11.2 | Turn GROUP and SUBGROUP | The `G## S##` line tracks both, always two digits |
-| T11.3 | Cross zone boundaries (GROUP 10→11, 22→23) | The zone line changes `BASS` → `RAND` → `ARP` |
-| T11.4 | Turn ROOT and SCALE | The third line tracks both, e.g. `G# DORIAN` |
-| T11.5 | SCALE to position 0 | The line reads `<root> RAW` — it does not pretend to be a scale |
-| T11.6 | Patch a CV into cvROOT or cvSCALE and sweep | The display follows the **effective** value, CV included, not just the knob |
-| T11.7 | Look at the module in the browser (not placed in a rack) | Renders sensibly with no module attached — no crash, no blank |
+| T11.1 | Read the three lines at GROUP 1 / SUBGROUP 1 | `1 . 1`, `BASS`, `C MINOR` — the spec's `group . subgroup` format, no leading zeros |
+| T11.2 | Turn GROUP and SUBGROUP | The first line tracks both |
+| T11.3 | Cross the boundaries (GROUP 10→11, 21→22) | The zone line changes `BASS` → `RAND` → `ARP↑` |
+| T11.4 | In the ARP zone, step SUBGROUP through 1, 9, 17, 25 | The arrow changes: `ARP↑`, `ARP↓`, `ARP↕`, `ARP↔` |
+| T11.5 | Turn ROOT and SCALE | The third line tracks both, e.g. `G# DORIAN` |
+| T11.6 | SCALE to position 0 | The line reads `<root> RAW` — it does not pretend to be a scale |
+| T11.7 | Patch a CV into cvROOT or cvSCALE and sweep | The display follows the **effective** value, CV included |
+| T11.8 | Fire RESEED | The display **flashes amber** briefly as the new seed lands |
+| T11.9 | Look at the module in the browser (not placed in a rack) | Renders sensibly with no module attached — no crash, no blank |
 
 ---
 
-## 13. Patch save **[NOW]** — Task 12
+## 14. Patch save **[NOW]** — Task 12
 
 | ID | Do | Expect |
 |---|---|---|
@@ -410,7 +456,7 @@ sets the base; the CV moves you from there.
 
 ---
 
-## 14. MetaModule hardware **[PENDING hardware]**
+## 15. MetaModule hardware **[PENDING hardware]**
 
 ```bash
 git push                                    # CI cross-compiles for ARM
@@ -423,7 +469,7 @@ Copy `NZZL.mmplugin` to the MetaModule's SD card, then:
 |---|---|---|
 | H.1 | Boot with the plugin installed | NZZL appears in the module list; no boot failure |
 | H.2 | Load NZZL into a patch | Loads without error or hang |
-| H.3 | Repeat §2–§13 on hardware | Same behaviour as in VCV Rack |
+| H.3 | Repeat §2–§14 on hardware | Same behaviour as in VCV Rack |
 | H.4 | **Same seed on hardware and in Rack, same knobs** | **Byte-identical pattern** — same notes, same rhythm. This is the whole point of the deterministic design |
 | H.5 | Check CPU load on the MetaModule | Headroom left for other modules |
 | H.6 | Run 30 minutes | No crash, no audio glitching, no thermal issue |
@@ -432,7 +478,7 @@ Copy `NZZL.mmplugin` to the MetaModule's SD card, then:
 
 ---
 
-## 15. Sign-off sheet
+## 16. Sign-off sheet
 
 Copy this block, fill it in, and paste it back when reporting results.
 
@@ -446,21 +492,24 @@ Part 4  Gate/Density     T4.1–T4.10     [ ] pass  [ ] fail: ______________
 Part 5  Velocity         T6.1–T6.5      [ ] pass  [ ] fail: ______________
 Part 6  Pitch/Scales     T5.1–T5.27     [ ] pass  [ ] fail: ______________
 Part 7  Cross/Stress     X.1–X.8        [ ] pass  [ ] fail: ______________
-Part 8  Slide            T7.1–T7.7      [ ] pass  [ ] fail: ______________
-Part 9  Style zones      T8.1–T8.8      [ ] pass  [ ] fail: ______________
-Part 10 Reseed           T9.1–T9.7      [ ] pass  [ ] fail: ______________
-Part 11 CV inputs        T10.1–T10.10   [ ] pass  [ ] fail: ______________
-Part 12 Display          T11.1–T11.7    [ ] pass  [ ] fail: ______________
-Part 13 Patch save       T12.1–T12.5    [ ] pass  [ ] fail: ______________
-Part 14 Hardware         H.1–H.8        [ ] n/a   [ ] pass  [ ] fail: _____
+Part 8  Slide / ties     T7.1–T7.9      [ ] pass  [ ] fail: ______________
+Part 9  Style zones      T8.1–T8.15     [ ] pass  [ ] fail: ______________
+Part 10 Gate & Accent    G.1–G.10       [ ] pass  [ ] fail: ______________
+Part 11 Reseed           T9.1–T9.7      [ ] pass  [ ] fail: ______________
+Part 12 CV inputs        T10.1–T10.11   [ ] pass  [ ] fail: ______________
+Part 13 Display          T11.1–T11.9    [ ] pass  [ ] fail: ______________
+Part 14 Patch save       T12.1–T12.5    [ ] pass  [ ] fail: ______________
+Part 15 Hardware         H.1–H.8        [ ] n/a   [ ] pass  [ ] fail: _____
 
 Musical judgement (not pass/fail — opinions wanted):
   Do the seed zones sound useful? ________________________________
   Is DENSITY's response musical?  ________________________________
   Is the scale list the right 12? ________________________________
   Does raw-as-position-0 beat a separate switch? _________________
-  Do the three style zones earn their place? _____________________
-  Is the slide range useful end to end? __________________________
+  Is the BASS zone convincingly acid? ____________________________
+  Are the 303 shaping rates right (runs, ties, octave jumps)? ____
+  Is 1–200% the right GATE range? _________________________________
+  Does ACCENT give the right amount of contrast? _________________
   Is the panel layout workable to play? __________________________
   Anything that feels wrong to play? _____________________________
 ```
@@ -471,7 +520,7 @@ enough to reproduce anything this module does.
 
 ---
 
-## 16. Maintaining this guide
+## 17. Maintaining this guide
 
 - A new task ships → give it a numbered **[NOW]** part with real test IDs.
 - The automated harness grows → move the covered rows *out* of here. Anything
