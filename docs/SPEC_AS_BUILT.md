@@ -457,6 +457,48 @@ stays *more* constrained than the random zone, so over-correcting fails too.
 
 ---
 
+## Known issues — found in the first playtest (2026-09-21)
+
+**Not yet fixed.** Both confirmed by simulation, both waiting on the go-ahead.
+
+### K1. The sequence is one sixteenth late against the clock
+
+The first clock pulse plays step **2**, not step 1. The step counter starts at
+0 and is incremented *before* the step fires, so pulse 1 → index 1, pulse 2 →
+index 2, and step index 0 — the pattern's first note — plays on pulse 16.
+
+That matters most in the bass zone, where 85 % of seeds are built to lead
+with the downbeat: the note meant for beat 1 actually lands on the last
+sixteenth of the bar, a pickup. Every pattern is shifted one sixteenth late.
+
+With CLOCK DIV it is worse. At ÷4 the first step fires on pulse **4** (should
+be 1), so a divided pattern is three pulses plus one step off the bar.
+
+The harness missed it because `test_clock_advances_steps` checks that steps
+advance, not *which* step fires on the first pulse.
+
+### K2. At short LENGTH, about half the DENSITY knob does nothing
+
+DENSITY ranks all sixteen steps by weight, but LENGTH only plays the first L
+of them. So raising DENSITY often switches on a step that sits outside the
+loop — and nothing audible happens.
+
+Measured: fraction of DENSITY clicks (d → d+1) that change nothing audible:
+
+| Setting | BASS | RAND | ARP |
+|---|---|---|---|
+| LENGTH 16, SLIDE 0 | 0 % | 0 % | 0 % |
+| LENGTH 16, SLIDE full | 7.3 % | 0.9 % | 0 % |
+| LENGTH 16, GATE 200 % | 2.5 % | 0.9 % | 2.3 % |
+| **LENGTH 8** | **52.9 %** | **49.8 %** | **50.2 %** |
+
+`DESIGN.md` recorded this as an accepted trade-off ("the knob still feels
+monotonic"). In practice it was the wrong call: at LENGTH 8 the knob is dead
+half the time. The smaller bass/SLIDE effect is ties plus root repetition —
+a new note arrives legato, on the same pitch as the one before it.
+
+---
+
 ## Future additions to consider
 
 **Nothing here is built, and nothing here should be built until asked for.**
@@ -538,6 +580,49 @@ which means the engine gains a pending-step timer it does not currently have.
 Gate duration and slide time are both derived from the step duration, so both
 would need to account for a shifted step boundary. Worth scoping carefully;
 it is a bigger change than it sounds.
+
+### 4. Chord positions on the SCALE knob
+
+Replace some of the scales with chords, so only chord tones play. Chords to
+be supplied.
+
+A chord drops straight into the existing quantizer — it is just a small
+interval set, e.g. a minor triad `{0, 3, 7}` or a minor seventh
+`{0, 3, 7, 10}` — and the proportional degree mapping spreads the sixteen
+pitch indices across its notes like any other scale.
+
+**One thing to fix alongside it.** The bass zone's acid vocabulary is defined
+by pitch *index*, tuned for seven-note scales. On a four-note chord it still
+lands correctly (root, third, fifth, seventh). On a **triad** it does not: the
+index meant as "the fifth" maps to the chord's *third*, so a bassline on a
+triad loses its fifth. The vocabulary needs to become degree-aware before
+triads ship.
+
+Replacing scales changes the knob's index order. That is fine before
+release, but any patches saved during testing will retune.
+
+### 5. SHIFT knob — rotate the sequence left or right by a step
+
+A bipolar knob that moves the whole pattern earlier or later by whole steps
+without changing its content — the OFFSET idea from the reference module.
+Named **SHIFT** here so it can't be confused with the pending **pitch** offset.
+
+Open design question: rotate the full sixteen-step pattern *before* the
+LENGTH window (so at LENGTH 8, shifting brings different parts of the
+pattern into the loop), or rotate *within* the window (a pure phase shift of
+what is already playing). The first is more useful and pairs naturally with
+the K2 fix.
+
+### 6. Seed changes land on the grid
+
+When a new seed arrives — knob turn, RESEED or CV SEED — it should start in
+step with the bar rather than wherever the step counter happens to be.
+
+Fixing **K1** puts step 1 back on the downbeat. On top of that, the new seed
+could be held until the next loop boundary so it always starts from its own
+step 1, the way clip launching is quantized in a DAW. There is no RESET
+input, so how well it lines up with an *external* bar still depends on when
+the module started.
 
 ---
 
