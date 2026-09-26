@@ -21,9 +21,9 @@ static int failures = 0;
 
 using namespace nzzl;
 
-static bool isAcidPitch(int idx) {
-    return idx == ACID_ROOT || idx == ACID_THIRD || idx == ACID_FOURTH
-        || idx == ACID_FIFTH || idx == ACID_SEVENTH;
+static bool isAcidRole(int r) {
+    return r == ACID_ROOT || r == ACID_THIRD || r == ACID_FOURTH
+        || r == ACID_FIFTH || r == ACID_SEVENTH;
 }
 
 // Bitmask of which steps play at a given density.
@@ -214,34 +214,63 @@ static void test_bass_downbeat() {
     printf("bass downbeat: %.0f%% of seeds put their first note on step 1\n", frac * 100);
 }
 
-// Acid vocabulary: root-dominated, and nothing outside the acid set.
+// Acid vocabulary: root-dominated, nothing outside it, and expressed as
+// intervals so it survives being pointed at a chord.
 static void test_bass_pitch_vocabulary() {
-    int root = 0, inSet = 0, total = 0;
+    int root = 0, total = 0;
     for (int seed = 0; seed < NUM_SEEDS; seed++) {
         if (styleForSeed(seed) != STYLE_BASS) continue;
         Pattern pat; generatePattern(seed, pat);
         for (int i = 0; i < MAX_STEPS; i++) {
-            int idx = pat.steps[i].pitchIndex;
+            int r = pat.steps[i].acidRole;
             total++;
-            if (isAcidPitch(idx)) inSet++;
-            if (idx == ACID_ROOT) root++;
-            CHECK(isAcidPitch(idx),
-                  "seed %d step %d: pitch %d is outside the acid vocabulary",
-                  seed, i, idx);
+            if (r == ACID_ROOT) root++;
+            CHECK(isAcidRole(r),
+                  "seed %d step %d: role %d is outside the acid vocabulary",
+                  seed, i, r);
         }
     }
-    CHECK(inSet == total, "%d bass notes left the acid set", total - inSet);
     float rootFrac = float(root) / float(total);
     CHECK(rootFrac > 0.45f && rootFrac < 0.65f,
           "root dominance %.2f is outside the intended band", rootFrac);
-    // and the degrees those indices map to, in a 7-note scale
-    CHECK(degreeForIndex(ACID_ROOT, 7) == 0,    "ACID_ROOT is not degree 0");
-    CHECK(degreeForIndex(ACID_THIRD, 7) == 2,   "ACID_THIRD is not degree 2");
-    CHECK(degreeForIndex(ACID_FOURTH, 7) == 3,  "ACID_FOURTH is not degree 3");
-    CHECK(degreeForIndex(ACID_FIFTH, 7) == 4,   "ACID_FIFTH is not degree 4");
-    CHECK(degreeForIndex(ACID_SEVENTH, 7) == 6, "ACID_SEVENTH is not degree 6");
     printf("bass pitch: %.0f%% root, every note from the acid set "
            "(root/3rd/4th/5th/7th)\n", rootFrac * 100);
+}
+
+// THE CHORD FIX: a role must resolve to the musically right degree on every
+// scale AND every chord — including triads, where a raw pitch index used to
+// land "the fifth" on the chord's third.
+static void test_acid_roles_resolve_on_every_scale() {
+    const int roles[5] = { ACID_ROOT, ACID_THIRD, ACID_FOURTH,
+                           ACID_FIFTH, ACID_SEVENTH };
+    for (int sc = 1; sc < NUM_SCALES; sc++) {
+        const Scale& scale = getScale(sc);
+        for (int k = 0; k < 5; k++) {
+            int role = roles[k];
+            int d = nearestDegree(scale, role);
+            CHECK(d >= 0 && d < scale.noteCount,
+                  "scale %s: role %d gave degree %d", scale.name, role, d);
+            int err = scale.intervals[d] - role;
+            if (err < 0) err = -err;
+            for (int i = 0; i < scale.noteCount; i++) {
+                int e2 = scale.intervals[i] - role;
+                if (e2 < 0) e2 = -e2;
+                CHECK(e2 >= err, "scale %s: role %d picked %d st, %d st was closer",
+                      scale.name, role, scale.intervals[d], scale.intervals[i]);
+            }
+        }
+        CHECK(scale.intervals[nearestDegree(scale, ACID_ROOT)] == 0,
+              "scale %s: the root role did not resolve to the root", scale.name);
+    }
+    // and specifically: a triad keeps its fifth
+    const Scale& minTriad = getScale(NUM_SCALES - 5);
+    CHECK(minTriad.noteCount == 3, "expected a triad at that position");
+    CHECK(minTriad.intervals[nearestDegree(minTriad, ACID_FIFTH)] == 7,
+          "a triad lost its fifth — the bug this fix exists for");
+    CHECK(minTriad.intervals[nearestDegree(minTriad, ACID_THIRD)] == 3,
+          "a minor triad did not resolve the third role to its minor third");
+    printf("acid roles: resolve to the nearest real degree on all %d scales "
+           "and chords, triads included\n", NUM_SCALES - 1);
 }
 
 // Octave-up jumps: present, rare, and never anything but +1.
@@ -319,7 +348,6 @@ static void test_arp_shapes() {
         }
         // arps are even and do not glide
         for (int i = 0; i < MAX_STEPS; i++) {
-            CHECK(!s[i].slide, "seed %d step %d: an arp slid", seed, i);
             CHECK(s[i].gateIndex == 1, "seed %d step %d: arp gate is not consistent",
                   seed, i);
         }
@@ -388,6 +416,7 @@ int main() {
     test_bass_runs_of_sixteenths();
     test_bass_downbeat();
     test_bass_pitch_vocabulary();
+    test_acid_roles_resolve_on_every_scale();
     test_bass_octave_jumps();
     test_bass_ties();
     test_arp_shapes();

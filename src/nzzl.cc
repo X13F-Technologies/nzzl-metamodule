@@ -25,8 +25,13 @@ struct NZZL : engine::Module {
         ROOT_PARAM,
         SCALE_PARAM,
         SLIDE_PARAM,
+        SLIDE_SLOPE_PARAM,
         GATE_PARAM,
         ACCENT_PARAM,
+        PITCH_OFFSET_PARAM,
+        SHIFT_PARAM,
+        SWING_PARAM,
+        RANDOM_PARAM,
         PARAMS_LEN
     };
 
@@ -61,6 +66,8 @@ struct NZZL : engine::Module {
     nzzl::Engine   engine;
 
     int seedIndex     = -1;      // effective seed (knobs + CV SEED)
+    int pendingSeed   = -1;      // waiting for the loop to wrap
+    dsp::SchmittTrigger randomButton;
     int displayScale  = nzzl::SCALE_NAT_MINOR;
     int displayRoot   = 0;
     float reseedFlash = 0.f;     // seconds remaining on the display indicator
@@ -82,8 +89,19 @@ struct NZZL : engine::Module {
             float(nzzl::SCALE_NAT_MINOR), "Scale",
             {"Unquantized", "Major", "Natural Minor", "Dorian", "Phrygian",
              "Mixolydian", "Lydian", "Harmonic Minor", "Melodic Minor",
-             "Pentatonic Major", "Pentatonic Minor", "Chromatic", "Whole Tone"});
-        configParam(SLIDE_PARAM,  0.f, 1.f, 0.f, "Slide");
+             "Pentatonic Major", "Pentatonic Minor", "Chromatic", "Whole Tone",
+             "Minor triad", "Major triad", "Minor 7th", "Dominant 7th",
+             "Minor 9th"});
+        configParam(SLIDE_PARAM, 0.f, 1.f, 0.f, "Slide");
+        configParam(SLIDE_SLOPE_PARAM, 0.f, 1.f, 0.5f, "Slide Shape",
+                    "", 0.f, 1.f, 0.f);
+        configParam(PITCH_OFFSET_PARAM, -7.f, 7.f, 0.f, "Pitch Offset",
+                    " degrees");
+        configParam(SHIFT_PARAM, -8.f, 8.f, 0.f, "Shift", " steps");
+        configParam(SWING_PARAM, 0.f, 100.f, 0.f, "Swing", "%");
+        configButton(RANDOM_PARAM, "Random seed");
+        getParamQuantity(PITCH_OFFSET_PARAM)->snapEnabled = true;
+        getParamQuantity(SHIFT_PARAM)->snapEnabled = true;
         // GATE scales the pattern's three note lengths together. Past 100%
         // notes run into the next step and tie.
         configParam(GATE_PARAM,   1.f, 200.f, 100.f, "Gate", "%");
@@ -99,7 +117,7 @@ struct NZZL : engine::Module {
 
         configInput(CLOCK_INPUT,    "Clock");
         configInput(RUN_INPUT,      "Run (trigger toggles)");
-        configInput(RESEED_INPUT,   "Reseed (trigger)");
+        configInput(RESEED_INPUT,   "Reseed / random seed (trigger)");
         configInput(CV_SCALE_INPUT, "CV Scale (override, 0-10V spans the list)");
         configInput(CV_SEED_INPUT,  "CV Seed (offset, 10V spans all 1024)");
         configInput(CV_ROOT_INPUT,  "CV Root (override, V/oct)");
@@ -110,7 +128,8 @@ struct NZZL : engine::Module {
         configOutput(VELOCITY_OUTPUT, "Velocity");
     }
 
-    // The one non-deterministic moment in the module, and only on a trigger.
+    // The one non-deterministic moment in the module, and only on a trigger
+    // or a button press.
     void reseed() {
         const int idx = int(random::u32() % uint32_t(nzzl::NUM_SEEDS));
         int group = 1, subgroup = 1;
@@ -127,6 +146,9 @@ struct NZZL : engine::Module {
             engine.reseedRequested = false;
             reseed();
         }
+        // The RANDOM button does exactly what the RESEED jack does.
+        if (randomButton.process(params[RANDOM_PARAM].getValue(), 0.1f, 0.5f))
+            reseed();
         if (reseedFlash > 0.f) reseedFlash -= args.sampleTime;
 
         const int group    = (int)std::round(params[GROUP_PARAM].getValue());
@@ -138,8 +160,13 @@ struct NZZL : engine::Module {
             inputs[CV_SEED_INPUT].getVoltage(),
             inputs[CV_SEED_INPUT].isConnected());
 
-        if (effectiveSeed != seedIndex) {
-            seedIndex = effectiveSeed;
+        // A new seed waits for the loop to wrap, so a pattern always starts
+        // from its own step 1 instead of dropping in mid-phrase.
+        if (effectiveSeed != seedIndex && effectiveSeed != pendingSeed)
+            pendingSeed = effectiveSeed;
+        if (pendingSeed >= 0 && (seedIndex < 0 || engine.loopWrapped)) {
+            seedIndex   = pendingSeed;
+            pendingSeed = -1;
             nzzl::generatePattern(seedIndex, pattern);
         }
 
@@ -151,8 +178,13 @@ struct NZZL : engine::Module {
         p.slideCv   = nzzl::cvSlideAmount(
             inputs[CV_SLIDE_INPUT].getVoltage(),
             inputs[CV_SLIDE_INPUT].isConnected());
+        p.slideSlope = params[SLIDE_SLOPE_PARAM].getValue();
         p.gate      = params[GATE_PARAM].getValue() / 100.f;
         p.accent    = params[ACCENT_PARAM].getValue() / 100.f;
+        p.shift     = (int)std::round(params[SHIFT_PARAM].getValue());
+        p.swing     = params[SWING_PARAM].getValue() / 100.f;
+        p.quant.degreeOffset =
+            (int)std::round(params[PITCH_OFFSET_PARAM].getValue());
 
         p.quant.octaveRange = (int)std::round(params[OCTAVE_RANGE_PARAM].getValue());
         p.quant.scaleIndex  = nzzl::applyScaleCv(
@@ -328,7 +360,7 @@ struct NZZLWidget : app::ModuleWidget {
 
     NZZLWidget(NZZL* module) {
         setModule(module);
-        box.size = math::Vec(app::RACK_GRID_WIDTH * 16, app::RACK_GRID_HEIGHT);
+        box.size = math::Vec(app::RACK_GRID_WIDTH * 20, app::RACK_GRID_HEIGHT);
 
         addLabel(math::Vec(box.size.x * 0.5f, 6.f), "N Z Z L", 16.f);
 
@@ -339,8 +371,8 @@ struct NZZLWidget : app::ModuleWidget {
 
         // ── Controls (left two columns) ──────────────────────────────────────
         const float cx1 = 30.f, cx2 = 85.f;
-        float y = 76.f;
-        const float dy = 44.f;
+        float y = 72.f;
+        const float dy = 38.f;
 
         addKnobWithLabel(math::Vec(cx1, y), module, NZZL::GROUP_PARAM,    "GROUP");
         addKnobWithLabel(math::Vec(cx2, y), module, NZZL::SUBGROUP_PARAM, "SUBGRP");
@@ -355,12 +387,21 @@ struct NZZLWidget : app::ModuleWidget {
         addKnobWithLabel(math::Vec(cx2, y), module, NZZL::SCALE_PARAM, "SCALE");
         y += dy;
         addKnobWithLabel(math::Vec(cx1, y), module, NZZL::SLIDE_PARAM,  "SLIDE");
-        addKnobWithLabel(math::Vec(cx2, y), module, NZZL::GATE_PARAM,   "GATE");
+        addKnobWithLabel(math::Vec(cx2, y), module, NZZL::SLIDE_SLOPE_PARAM, "SHAPE");
         y += dy;
-        addKnobWithLabel(math::Vec(cx1, y), module, NZZL::ACCENT_PARAM, "ACCENT");
+        addKnobWithLabel(math::Vec(cx1, y), module, NZZL::GATE_PARAM,   "GATE");
+        addKnobWithLabel(math::Vec(cx2, y), module, NZZL::ACCENT_PARAM, "ACCENT");
+        y += dy;
+        addKnobWithLabel(math::Vec(cx1, y), module, NZZL::PITCH_OFFSET_PARAM, "P.OFFSET");
+        addKnobWithLabel(math::Vec(cx2, y), module, NZZL::SHIFT_PARAM,  "SHIFT");
+        y += dy;
+        addKnobWithLabel(math::Vec(cx1, y), module, NZZL::SWING_PARAM,  "SWING");
+        addParam(createParamCentered<componentlibrary::VCVButton>(
+            math::Vec(cx2, y), module, NZZL::RANDOM_PARAM));
+        addLabel(math::Vec(cx2, y + 13.f), "RANDOM");
 
         // ── Jacks ────────────────────────────────────────────────────────────
-        const float jx1 = 150.f, jx2 = 200.f;
+        const float jx1 = 195.f, jx2 = 250.f;
         float jy = 80.f;
         const float jdy = 42.f;
 

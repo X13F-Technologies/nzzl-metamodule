@@ -23,7 +23,7 @@ namespace nzzl {
 
 // The twelve scales named in the handoff spec, plus position 0 for
 // unquantized — thirteen knob positions in all.
-constexpr int NUM_SCALES      = 13;
+constexpr int NUM_SCALES      = 18;
 constexpr int MAX_SCALE_NOTES = 12;
 
 struct Scale {
@@ -54,6 +54,16 @@ inline const Scale& getScale(int index) {
         { "PENT MIN",  5, {0,3,5,7,10} },
         { "CHROM",    12, {0,1,2,3,4,5,6,7,8,9,10,11} },
         { "WHOLE",     6, {0,2,4,6,8,10} },     // whole tone
+        // ── Chord positions ────────────────────────────────────────────
+        // Only chord tones play. A chord is just a small interval set, so
+        // the quantizer needs no special case. PLACEHOLDER SET — swap these
+        // for the chords you actually want and drop whichever scales above
+        // you do not need.
+        { "MIN",       3, {0,3,7} },            // minor triad
+        { "MAJ",       3, {0,4,7} },            // major triad
+        { "MIN7",      4, {0,3,7,10} },
+        { "DOM7",      4, {0,4,7,10} },
+        { "MIN9",      5, {0,2,3,7,10} },       // 9th folded into the octave
     };
     if (index < 0)           index = 0;
     if (index >= NUM_SCALES) index = NUM_SCALES - 1;
@@ -84,6 +94,26 @@ inline int octaveForRaw(float octaveRaw, int octaveRange) {
     return o;
 }
 
+// The degree of `sc` whose interval sits closest to `targetSemitone`.
+//
+// This is what lets the bass zone keep its musical intent on ANY scale or
+// chord. The acid vocabulary is stored as roles (root, third, fourth, fifth,
+// seventh) rather than as raw pitch indices, because a raw index means a
+// different degree depending on how many notes the scale has: on a triad the
+// index that means "the fifth" in a seven-note scale lands on the chord's
+// third instead. Resolving the role against the actual interval table fixes
+// that for every scale and chord at once.
+inline int nearestDegree(const Scale& sc, int targetSemitone) {
+    if (sc.noteCount <= 0) return 0;
+    int best = 0, bestDist = 127;
+    for (int i = 0; i < sc.noteCount; i++) {
+        int d = sc.intervals[i] - targetSemitone;
+        if (d < 0) d = -d;
+        if (d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+}
+
 // A step's octave. `octaveJump >= 0` is an explicit offset the style layer
 // asked for (a 303 octave-up is +1 and must stay +1 whatever the OCTAVE
 // RANGE knob says); -1 means "spread me across the range" and falls back to
@@ -96,9 +126,14 @@ inline int octaveForStep(int octaveJump, float octaveRaw, int octaveRange) {
 }
 
 struct QuantizeParams {
-    int scaleIndex  = SCALE_NAT_MINOR;  // 0 = unquantized, 1.. = a scale
-    int root        = 0;       // 0 .. 11 semitones
-    int octaveRange = 2;       // 1 .. 5
+    int scaleIndex   = SCALE_NAT_MINOR;  // 0 = unquantized, 1.. = a scale
+    int root         = 0;      // 0 .. 11 semitones
+    int octaveRange  = 2;      // 1 .. 5
+    // PITCH OFFSET, in scale degrees. Applied BEFORE quantization, so the
+    // result is always still in key — the whole point of doing it here
+    // rather than adding semitones to an already-quantized note. Degrees
+    // that run past the top of the scale carry into the next octave.
+    int degreeOffset = 0;      // -7 .. +7
 };
 
 // Quantized: root transpose + octave + scale degree, in 1V/oct.
@@ -114,9 +149,15 @@ inline float quantizedVoltage(int pitchIndex, float octaveRaw,
     if (sc.noteCount <= 0)
         return rawVoltage(pitchIndex, octaveRaw, p);
     int root = p.root < 0 ? 0 : (p.root > 11 ? 11 : p.root);
-    int degree   = degreeForIndex(pitchIndex, sc.noteCount);
-    int octave   = octaveForRaw(octaveRaw, p.octaveRange);
-    (void)0;
+    int degree = degreeForIndex(pitchIndex, sc.noteCount);
+    int octave = octaveForRaw(octaveRaw, p.octaveRange);
+
+    // Pitch offset, pre-quantization: move by whole scale degrees and let
+    // the overflow roll into the octave, so the note stays in key.
+    degree += p.degreeOffset;
+    while (degree >= sc.noteCount) { degree -= sc.noteCount; octave++; }
+    while (degree < 0)             { degree += sc.noteCount; octave--; }
+
     int semitone = root + sc.intervals[degree];
     return float(octave) + float(semitone) / 12.f;
 }
@@ -129,18 +170,35 @@ inline float rawVoltage(int pitchIndex, float octaveRaw,
     int idx  = pitchIndex < 0 ? 0 : (pitchIndex >= MAX_STEPS ? MAX_STEPS - 1
                                                              : pitchIndex);
     int octave = octaveForRaw(octaveRaw, p.octaveRange);
+    // Unquantized has no degrees, so the offset moves in sixteenths of an
+    // octave — the same step size the raw pattern already uses.
+    idx += p.degreeOffset;
+    while (idx >= MAX_STEPS) { idx -= MAX_STEPS; octave++; }
+    while (idx < 0)          { idx += MAX_STEPS; octave--; }
     return float(root) / 12.f + float(octave)
          + float(idx) / float(MAX_STEPS);
 }
 
-// A step's pitch, honouring an explicit style-set octave jump.
+// A step's pitch, honouring an explicit style-set octave jump and, for bass
+// steps, the acid role rather than the raw index.
 inline float pitchVoltage(const StepData& s, const QuantizeParams& p) {
     const int octave = octaveForStep(s.octaveJump, s.octaveRaw, p.octaveRange);
     // Re-express the chosen octave as a raw value the helpers below accept.
     const int range = p.octaveRange < 1 ? 1 : p.octaveRange;
     const float raw = (float(octave) + 0.5f) / float(range);
-    return isUnquantized(p.scaleIndex) ? rawVoltage(s.pitchIndex, raw, p)
-                                       : quantizedVoltage(s.pitchIndex, raw, p);
+
+    if (isUnquantized(p.scaleIndex))
+        return rawVoltage(s.pitchIndex, raw, p);
+
+    const Scale& sc = getScale(p.scaleIndex);
+    if (s.acidRole >= 0 && sc.noteCount > 0) {
+        // Resolve the role against THIS scale's intervals, then express it
+        // as the pitch index that lands on that degree.
+        const int degree = nearestDegree(sc, s.acidRole);
+        const int idx    = (degree * MAX_STEPS) / sc.noteCount;
+        return quantizedVoltage(idx, raw, p);
+    }
+    return quantizedVoltage(s.pitchIndex, raw, p);
 }
 
 } // namespace nzzl

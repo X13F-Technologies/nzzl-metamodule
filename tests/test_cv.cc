@@ -79,7 +79,7 @@ static void test_cv_scale() {
     // position, 0-10 V across the whole list.
     CHECK(applyScaleCv(7, 0.f, true) == 0, "0 V should select position 0 (unquantized)");
     CHECK(applyScaleCv(7, 10.f, true) == NUM_SCALES - 1, "10 V should select the last scale");
-    CHECK(applyScaleCv(0, 5.f, true) == (NUM_SCALES - 1) / 2,
+    CHECK(applyScaleCv(0, 5.f, true) == int((NUM_SCALES - 1) * 0.5f + 0.5f),
           "5 V should land mid-list, got %d", applyScaleCv(0, 5.f, true));
     CHECK(applyScaleCv(7, 3.f, true) == applyScaleCv(2, 3.f, true),
           "the knob still influenced an overridden scale");
