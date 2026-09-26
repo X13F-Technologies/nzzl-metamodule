@@ -78,7 +78,8 @@ Audio-8.
 
 **NZZL knobs**
 `GROUP 1 · SUBGROUP 1 · DENSITY 8 · LENGTH 16 · CLK DIV 1 · OCT RANGE 2 ·
-ROOT C · SCALE Natural Minor · SLIDE 0 · GATE 100% · ACCENT 100%`
+ROOT C · SCALE Natural Minor · SLIDE 0 · SHAPE centre · GATE 100% ·
+ACCENT 100% · P.OFFSET 0 · SHIFT 0 · SWING 0`
 
 The panel is three columns — controls left, jacks middle, outputs bottom
 right — with a three-line display across the top showing the seed, the zone
@@ -113,7 +114,7 @@ meaningful.
 | ID | Do | Expect |
 |---|---|---|
 | S.1 | Add NZZL to a rack | Module appears, no Rack crash, no red "failed to load" panel |
-| S.2 | Look at the panel | 11 knobs, 7 input jacks, 3 output jacks, all labelled, nothing overlapping or off the edge |
+| S.2 | Look at the panel | 20 HP: 15 knobs, a RANDOM button, 7 input jacks, 3 output jacks, all labelled, nothing overlapping or off the edge |
 | S.2b | Look at the display | Three lines: `1 . 1`, `BASS`, `C MINOR`. Legible, not clipped |
 | S.3 | Start the LFO clock | Gate LED activity on the Scope; you hear notes |
 | S.4 | Let it run 60 s | No dropouts, no clicks on every note, no runaway CPU (right-click module → CPU meter stays low) |
@@ -484,7 +485,64 @@ Copy `NZZL.mmplugin` to the MetaModule's SD card, then:
 
 ---
 
-## 16. Sign-off sheet
+## 16. Grid alignment and the fixed bugs **[NOW]**
+
+Both of these were real bugs found in the first playtest. They are fixed and
+harness-guarded; these steps confirm it by ear and eye.
+
+| ID | Do | Expect |
+|---|---|---|
+| F.1 | Run a steady clock with a drum machine or a visible clock LED, DENSITY 16 | The sequencer's **first step lands on the clock's first pulse**, not one sixteenth later |
+| F.2 | GROUP 3 (bass), DENSITY 4, against a kick on the downbeat | The pattern's lead note sits **on** the beat, not just before it |
+| F.3 | Set CLK DIV 4, restart the clock | The first step still fires on the **first** pulse, not the fourth |
+| F.4 | Set LENGTH 8, sweep DENSITY 1→8 | **Every click adds a note you can hear.** This used to do nothing about half the time |
+| F.5 | LENGTH 4, 6, 12 — sweep DENSITY at each | Same: no dead clicks at any length |
+| F.6 | LENGTH 8, DENSITY 8 | All eight steps of the loop play |
+| F.7 | Change GROUP mid-bar while running | The new pattern **waits for the loop to come round** and starts from its step 1, rather than cutting in mid-phrase |
+| F.8 | Fire RESEED or press RANDOM mid-bar | Same — it lands on the grid |
+
+---
+
+## 17. New controls **[NOW]**
+
+| ID | Do | Expect |
+|---|---|---|
+| N.1 | Turn **P.OFFSET** up one click at a time | The whole pattern steps **up through the scale**, staying in key. Nothing goes out of tune |
+| N.2 | P.OFFSET to +7, then −7, in a 7-note scale | +7 is the same notes an octave up; −7 an octave down |
+| N.3 | P.OFFSET with SCALE at position 0 (unquantized) | Still shifts, in sixteenths of an octave |
+| N.4 | P.OFFSET with OCT RANGE 1 | The pattern moves out of its starting octave — this is the "where does the range start" control that was missing |
+| N.5 | Turn **SHIFT** one click | The whole rhythm rotates by one step. Same notes, different placement |
+| N.6 | SHIFT through a full 16 | You arrive back where you started |
+| N.7 | LENGTH 8, then sweep SHIFT | **Different parts of the 16-step pattern come into the loop** — not just a re-phasing of the same 8 |
+| N.8 | Turn **SWING** up with a straight kick under it | Off-beats push late, downbeats stay put. At 100% it is a hard shuffle, not a stumble |
+| N.9 | SWING up, then change seed | The groove **changes with the seed** — swing is part of a pattern's identity |
+| N.10 | SWING at 0 | Dead straight, exactly as before |
+| N.11 | SLIDE up, sweep **SHAPE** from left to centre to right | Glides go from fast-off-the-mark, through even, to slow-then-rushing. **Every one still lands in tune** |
+| N.12 | SHAPE at either extreme, listen to the end of a glide | No overshoot, no wobble — it settles exactly on the note |
+| N.13 | Press **RANDOM** | New pattern; GROUP and SUBGROUP jump to match; display flashes |
+| N.14 | Press RANDOM 10 times | Seeds spread across the range. Dial one back by hand and it returns |
+
+---
+
+## 18. Chords **[NOW]**
+
+SCALE positions 13–17 are chords, where only chord tones play. **These are
+placeholder chords** — say which ones you actually want and they get swapped.
+
+| ID | Do | Expect |
+|---|---|---|
+| C.1 | SCALE to Minor triad | Only root, minor third and fifth ever sound |
+| C.2 | Step through all five chord positions | Each is unambiguously its own chord |
+| C.3 | GROUP 3 (bass) on **Minor triad** | The bassline still favours **root and fifth**. If it sounds like it is hammering the third, the role mapping is wrong |
+| C.4 | Same bass seed, switch triad → Minor 7th → Natural Minor | The line keeps its shape and its root emphasis; only the available colour changes |
+| C.5 | A chord with P.OFFSET | Steps through the chord tones, staying in the chord |
+| C.6 | A chord with a low OCT RANGE | Few distinct pitches, lots of repetition — expected with three notes |
+
+---
+
+---
+
+## 19. Sign-off sheet
 
 Copy this block, fill it in, and paste it back when reporting results.
 
@@ -506,6 +564,9 @@ Part 12 CV inputs        T10.1–T10.11   [ ] pass  [ ] fail: ______________
 Part 13 Display          T11.1–T11.9    [ ] pass  [ ] fail: ______________
 Part 14 Patch save       T12.1–T12.5    [ ] pass  [ ] fail: ______________
 Part 15 Hardware         H.1–H.8        [ ] n/a   [ ] pass  [ ] fail: _____
+Part 16 Fixed bugs       F.1–F.8        [ ] pass  [ ] fail: ______________
+Part 17 New controls     N.1–N.14       [ ] pass  [ ] fail: ______________
+Part 18 Chords           C.1–C.6        [ ] pass  [ ] fail: ______________
 
 Musical judgement (not pass/fail — opinions wanted):
   Do the seed zones sound useful? ________________________________
@@ -515,6 +576,9 @@ Musical judgement (not pass/fail — opinions wanted):
   Are the 303 shaping rates right (runs, ties, octave jumps)? ____
   Is 1–200% the right GATE range? _________________________________
   Does ACCENT give the right amount of contrast? _________________
+  Which chords do you actually want in those five slots? _________
+  Should P.OFFSET move in degrees (as built) or octaves? _________
+  Is the SWING range and curve right? ____________________________
   Is the panel layout workable to play? __________________________
   Anything that feels wrong to play? _____________________________
 ```
@@ -525,7 +589,7 @@ enough to reproduce anything this module does.
 
 ---
 
-## 17. Maintaining this guide
+## 20. Maintaining this guide
 
 - A new task ships → give it a numbered **[NOW]** part with real test IDs.
 - The automated harness grows → move the covered rows *out* of here. Anything

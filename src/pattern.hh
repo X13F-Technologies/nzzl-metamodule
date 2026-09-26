@@ -30,13 +30,49 @@ struct StepData {
     bool  slide;        // 303-style tie: gate holds through to the next note
     int   octaveJump;   // >= 0 = explicit octave offset; -1 = use octaveRaw
     float octaveRaw;    // 0.0–1.0, spread across octave range at playback
+    // The acid vocabulary as a musical INTERVAL IN SEMITONES (0 root, 3
+    // third, 5 fourth, 7 fifth, 10 seventh) rather than a raw pitch index,
+    // resolved against the actual scale at playback. -1 = use pitchIndex.
+    // Without this, "the fifth" means a different degree on a triad than on
+    // a seven-note scale, and chord positions lose the fifth entirely.
+    int   acidRole;
 };
+
+// Is this step switched on at the given DENSITY?
+//
+// The weight permutation runs across all sixteen steps, but the loop only
+// plays the first `length` of them. Comparing weight to density directly
+// means raising DENSITY often switches on a step outside the loop and
+// nothing is heard — at LENGTH 8 that was about half of the knob's travel.
+// Ranking the weights WITHIN the window keeps every click audible at any
+// length, and is identical to the old behaviour at LENGTH 16.
+struct Pattern;
+inline bool stepActive(const Pattern& pat, int step, int length, int density,
+                       int shift = 0);
 
 // One pattern: the sixteen steps plus the three note lengths they index into.
 struct Pattern {
     StepData steps[MAX_STEPS];
     float    gateLengths[NUM_GATE_LENGTHS];   // fractions of a clock period
+    float    swing;      // 0..1, seed-derived; scaled by the SWING knob
 };
+
+inline bool stepActive(const Pattern& pat, int step, int length, int density,
+                       int shift) {
+    length  = clampi(length, 2, MAX_STEPS);
+    density = clampi(density, 1, length);
+    if (step < 0 || step >= length)
+        return false;
+    auto rot = [shift](int i) {
+        return ((i + shift) % MAX_STEPS + MAX_STEPS) % MAX_STEPS;
+    };
+    const int w = pat.steps[rot(step)].weight;
+    int rank = 1;                              // 1 = quietest-weighted step
+    for (int i = 0; i < length; i++)
+        if (i != step && pat.steps[rot(i)].weight < w)
+            rank++;
+    return rank <= density;
+}
 
 // Velocity for a layer, with ACCENT (0–100) scaling the contrast between
 // layers. At 0 every note is the same mid level; at 100 the layers are fully
@@ -76,6 +112,7 @@ enum AttrSalt : uint32_t {
     SALT_GATELEN  = 0x474C454E,   // the pattern's three note lengths
     SALT_ACCENT   = 0x41434354,   // per-step velocity layer
     SALT_OCTJUMP  = 0x4F4A4D50,   // per-step octave jump
+    SALT_SWING    = 0x53574E47,   // per-pattern swing amount
 };
 
 inline Xorshift32 attrRng(int seedIndex, uint32_t salt) {
@@ -142,6 +179,13 @@ inline void generateBasePattern(int seedIndex, Pattern& pat) {
             (void)rng.nextFloat();          // reserved; styles overwrite this
             steps[i].octaveJump = -1;       // default: spread across the range
         }
+    }
+    for (int i = 0; i < MAX_STEPS; i++)
+        steps[i].acidRole = -1;             // only the bass zone sets roles
+    {
+        // Groove is part of a pattern's identity, not just a global setting.
+        auto rng = attrRng(seedIndex, SALT_SWING);
+        pat.swing = rng.nextFloat();
     }
 }
 
@@ -239,17 +283,18 @@ constexpr float BASS_SLIDE_CHANCE    = 0.32f;  // ties are common in acid
 constexpr float BASS_ACCENT_CHANCE   = 0.28f;  // accented (high-layer) notes
 constexpr float BASS_OCTAVE_UP       = 0.18f;  // the 303's octave-up button
 
-// pitchIndex values whose 7-note degree is 0, 2, 3, 4, 6 — root, third,
-// fourth, fifth, seventh. The vocabulary an acid line actually uses.
-constexpr int ACID_ROOT   = 0;    // degree 0
-constexpr int ACID_THIRD  = 5;    // degree 2
-constexpr int ACID_FOURTH = 7;    // degree 3
-constexpr int ACID_FIFTH  = 10;   // degree 4
-constexpr int ACID_SEVENTH= 14;   // degree 6
+// The acid vocabulary, as INTERVALS IN SEMITONES. Stored this way, not as
+// pitch indices, so each one can be resolved against whatever scale or chord
+// is selected — see nearestDegree() in scales.hh.
+constexpr int ACID_ROOT    = 0;
+constexpr int ACID_THIRD   = 3;
+constexpr int ACID_FOURTH  = 5;
+constexpr int ACID_FIFTH   = 7;
+constexpr int ACID_SEVENTH = 10;
 
 // Cumulative weights: root 55%, fifth 15%, third 12%, seventh 10%, fourth 8%.
 // The root dominance is what gives an acid line its hypnotic repetition.
-inline int acidPitch(float r) {
+inline int acidRole(float r) {
     if (r < 0.55f) return ACID_ROOT;
     if (r < 0.70f) return ACID_FIFTH;
     if (r < 0.82f) return ACID_THIRD;
@@ -295,8 +340,11 @@ inline void applyStyle(int seedIndex, Pattern& pat) {
             steps[pri[k]].weight = k + 1;
 
         // ── Pitch: root-dominated acid vocabulary ───────────────────────────
-        for (int i = 0; i < MAX_STEPS; i++)
-            steps[i].pitchIndex = acidPitch(rng.nextFloat());
+        for (int i = 0; i < MAX_STEPS; i++) {
+            steps[i].acidRole = acidRole(rng.nextFloat());
+            // Fallback index for unquantized mode, which has no degrees.
+            steps[i].pitchIndex = (steps[i].acidRole * MAX_STEPS) / 12;
+        }
 
         // ── Octave: mostly home, occasional octave-up ───────────────────────
         for (int i = 0; i < MAX_STEPS; i++)
@@ -350,8 +398,10 @@ inline void applyStyle(int seedIndex, Pattern& pat) {
     // Even subdivisions and consistent gates — the arp feel.
     for (int i = 0; i < MAX_STEPS; i++) {
         steps[i].gateIndex  = 1;                    // one length for all
-        steps[i].slide      = false;                // arps do not glide
         steps[i].octaveJump = -1;                   // spread across the range
+        // Arps keep the base pattern's slide flags. Silencing them was an
+        // earlier choice of mine, not something the spec asked for, and the
+        // glides were missed in testing.
         steps[i].velLayer   = rng.nextFloat() < 0.25f ? 2 : 1;
     }
 }

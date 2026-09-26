@@ -38,6 +38,12 @@ static const RefScale kRef[NUM_SCALES] = {
     { "PENT MIN", 5, {0,3,5,7,10} },
     { "CHROM",   12, {0,1,2,3,4,5,6,7,8,9,10,11} },
     { "WHOLE",    6, {0,2,4,6,8,10} },            // whole tone
+    // chord positions — only chord tones play
+    { "MIN",      3, {0,3,7} },                   // minor triad
+    { "MAJ",      3, {0,4,7} },                   // major triad
+    { "MIN7",     4, {0,3,7,10} },
+    { "DOM7",     4, {0,4,7,10} },
+    { "MIN9",     5, {0,2,3,7,10} },              // 9th folded into the octave
 };
 
 // The first real scale. Index 0 is RAW and has no intervals to check.

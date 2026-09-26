@@ -648,6 +648,216 @@ static void test_accent_reaches_output() {
     printf("accent: 0 flattens velocity, 100 gives %.1f V of contrast\n", full);
 }
 
+
+// ── grid alignment (bug K1) ─────────────────────────────────────────────────
+
+// The FIRST clock pulse must play step index 0. It used to play index 1, so
+// every pattern ran a sixteenth late and the bass zone's downbeat landed on
+// the pickup before the bar.
+static void test_first_pulse_plays_step_one() {
+    Pattern pat; generatePattern(400, pat);
+
+    for (int div = 1; div <= 4; div++) {
+        EngineParams p;
+        p.density = MAX_STEPS;
+        p.clockDiv = div;
+        Engine e;
+        EngineInputs in;
+        int firstFiringPulse = -1, firstStep = -1;
+
+        for (int pulse = 1; pulse <= 16 && firstFiringPulse < 0; pulse++) {
+            in.clock = 10.f;
+            e.process(DT, in, pat, p);
+            if (e.gateTimer > 0.f) { firstFiringPulse = pulse; firstStep = e.step; }
+            in.clock = 0.f;
+            for (int i = 0; i < 200; i++) e.process(DT, in, pat, p);
+        }
+        CHECK(firstFiringPulse == 1,
+              "clockDiv %d: the first step fired on pulse %d, not pulse 1",
+              div, firstFiringPulse);
+        CHECK(firstStep == 0,
+              "clockDiv %d: pulse 1 played step index %d, not 0", div, firstStep);
+    }
+
+    // and the steps keep marching in order from there
+    EngineParams p;
+    p.density = MAX_STEPS;
+    Engine e; EngineInputs in;
+    for (int pulse = 0; pulse < 5; pulse++) {
+        in.clock = 10.f; e.process(DT, in, pat, p);
+        CHECK(e.step == pulse, "pulse %d played step %d", pulse + 1, e.step);
+        in.clock = 0.f; for (int i = 0; i < 200; i++) e.process(DT, in, pat, p);
+    }
+    printf("grid: pulse 1 plays step 1 at every clock division\n");
+}
+
+// ── density inside the loop (bug K2) ────────────────────────────────────────
+
+// At any LENGTH, raising DENSITY by one must switch on exactly one more step
+// INSIDE the loop. It used to switch on steps the loop never reached.
+static void test_density_respects_length() {
+    for (int seed = 0; seed < NUM_SEEDS; seed += 37) {
+        Pattern pat; generatePattern(seed, pat);
+        for (int length = 2; length <= MAX_STEPS; length++) {
+            int prev = -1;
+            for (int d = 1; d <= length; d++) {
+                int n = 0;
+                for (int i = 0; i < length; i++)
+                    if (stepActive(pat, i, length, d, 0)) n++;
+                CHECK(n == d,
+                      "seed %d length %d density %d: %d steps active",
+                      seed, length, d, n);
+                CHECK(n > prev, "seed %d length %d: density %d added nothing",
+                      seed, length, d);
+                prev = n;
+            }
+            // density past the loop length simply means "all of them"
+            CHECK([&]{ int n = 0;
+                       for (int i = 0; i < length; i++)
+                           if (stepActive(pat, i, length, MAX_STEPS, 0)) n++;
+                       return n; }() == length,
+                  "seed %d length %d: full density did not fill the loop",
+                  seed, length);
+        }
+    }
+    printf("density: every click adds exactly one step at every LENGTH 2..16\n");
+}
+
+// ── SHIFT ───────────────────────────────────────────────────────────────────
+
+// Rotating by a whole loop is a no-op; rotating by one moves every step along
+// by one; and the pattern's content is preserved, only its phase changes.
+static void test_shift_rotates_pattern() {
+    Pattern pat; generatePattern(400, pat);
+
+    for (int shift = -8; shift <= 8; shift++) {
+        CHECK(rotatedIndex(0, shift) == ((shift % 16) + 16) % 16,
+              "shift %d did not rotate step 0 correctly", shift);
+        for (int i = 0; i < MAX_STEPS; i++)
+            CHECK(rotatedIndex(i, shift + MAX_STEPS) == rotatedIndex(i, shift),
+                  "shift %d and %d differ — a full loop should be a no-op",
+                  shift, shift + MAX_STEPS);
+    }
+    // a shift of one moves the whole active set along by one step
+    for (int d = 1; d <= MAX_STEPS; d++) {
+        for (int i = 0; i < MAX_STEPS; i++) {
+            bool a = stepActive(pat, i, MAX_STEPS, d, 0);
+            bool b = stepActive(pat, (i - 1 + MAX_STEPS) % MAX_STEPS,
+                                MAX_STEPS, d, 1);
+            CHECK(a == b, "density %d: shift 1 did not move step %d along", d, i);
+        }
+    }
+    // the number of playing steps never changes with shift
+    for (int shift = -8; shift <= 8; shift++) {
+        int n = 0;
+        for (int i = 0; i < MAX_STEPS; i++)
+            if (stepActive(pat, i, MAX_STEPS, 6, shift)) n++;
+        CHECK(n == 6, "shift %d changed the number of active steps to %d", shift, n);
+    }
+    printf("shift: rotates the pattern, preserves its content and density\n");
+}
+
+// ── swing ───────────────────────────────────────────────────────────────────
+
+// Swing must delay only the off-beat sixteenths, and never the downbeat.
+static void test_swing_delays_offbeats() {
+    Pattern pat; generatePattern(400, pat);
+    pat.swing = 1.f;                      // maximum seed swing, isolate the knob
+
+    auto firstGapAfterStep = [&](float swingKnob, int wantStep) {
+        EngineParams p;
+        p.density = MAX_STEPS;
+        p.gate = 0.2f;                    // short notes, so onsets are crisp
+        p.swing = swingKnob;
+        Engine e;
+        Clock clk(0.2f);
+        float tSinceClock = 0.f, onset = -1.f, prevV = 0.f;
+        bool was = false, armed = false;
+        int n = int(0.2f * 24 / DT);
+        for (int i = 0; i < n; i++) {
+            EngineInputs in;
+            float v = clk.tick(DT);
+            // a real rising edge, not "the clock happens to be high"
+            if (v > 5.f && prevV <= 5.f) tSinceClock = 0.f;
+            else                          tSinceClock += DT;
+            prevV = v;
+            in.clock = v;
+            EngineOutputs o = e.process(DT, in, pat, p);
+            bool g = o.gate > 5.f;
+            if (g && !was && e.step == wantStep && !armed) {
+                onset = tSinceClock; armed = true;
+            }
+            was = g;
+        }
+        return onset;
+    };
+
+    float evenNo  = firstGapAfterStep(0.f, 2);
+    float oddNo   = firstGapAfterStep(0.f, 3);
+    float evenYes = firstGapAfterStep(1.f, 2);
+    float oddYes  = firstGapAfterStep(1.f, 3);
+
+    CHECK(evenYes < 0.01f && evenNo < 0.01f,
+          "an even step was delayed (%.4f s with swing, %.4f without)",
+          evenYes, evenNo);
+    CHECK(oddNo < 0.01f, "an odd step was late with SWING at zero (%.4f s)", oddNo);
+    CHECK(oddYes > 0.01f, "SWING did not delay the off-beat (%.4f s)", oddYes);
+    CHECK(oddYes < 0.2f * SWING_MAX_FRACTION + 0.01f,
+          "SWING pushed the off-beat %.4f s, past the one-third cap", oddYes);
+    printf("swing: delays off-beats by up to %.0f%% of a step, never downbeats\n",
+           SWING_MAX_FRACTION * 100);
+}
+
+// ── slide shape ─────────────────────────────────────────────────────────────
+
+// Whatever the curve, a glide must still arrive exactly and never overshoot.
+static void test_slide_curve_preserves_arrival() {
+    for (float slope = 0.f; slope <= 1.f; slope += 0.1f) {
+        CHECK(Engine::slideCurve(0.f, slope) == 0.f,
+              "slope %.1f does not start at 0", slope);
+        CHECK(std::fabs(Engine::slideCurve(1.f, slope) - 1.f) < 1e-6f,
+              "slope %.1f does not arrive exactly at 1", slope);
+        float prev = -1.f;
+        for (float t = 0.f; t <= 1.f; t += 0.01f) {
+            float v = Engine::slideCurve(t, slope);
+            CHECK(v >= -1e-6f && v <= 1.f + 1e-6f,
+                  "slope %.1f overshot at t=%.2f (%.4f)", slope, t, v);
+            CHECK(v >= prev - 1e-6f, "slope %.1f is not monotonic at t=%.2f", slope, t);
+            prev = v;
+        }
+    }
+    // the three characters are actually different at the midpoint
+    float logC = Engine::slideCurve(0.5f, 0.f);
+    float lin  = Engine::slideCurve(0.5f, 0.5f);
+    float expC = Engine::slideCurve(0.5f, 1.f);
+    CHECK(logC > lin + 0.05f, "the log end is not faster off the mark");
+    CHECK(expC < lin - 0.05f, "the exp end is not slower off the mark");
+    CHECK(std::fabs(lin - 0.5f) < 1e-5f, "the centre detent is not linear");
+    printf("slide shape: log %.2f / linear %.2f / exp %.2f at halfway, "
+           "all arrive exactly\n", logC, lin, expC);
+}
+
+// ── seed changes land on the grid ───────────────────────────────────────────
+
+static void test_loop_wrap_signal() {
+    Pattern pat; generatePattern(400, pat);
+    EngineParams p;
+    p.density = MAX_STEPS;
+    Engine e;
+    Clock clk(0.05f);
+    int wraps = 0, steps = 0, lastStep = -1;
+    run(e, clk, pat, p, 0.05f * 40.f, [&](EngineOutputs, float) {
+        if (e.loopWrapped) {
+            wraps++;
+            CHECK(e.step == 0, "loopWrapped fired on step %d", e.step);
+        }
+        if (e.step != lastStep) { steps++; lastStep = e.step; }
+    });
+    CHECK(wraps >= 2, "only %d loop wraps in 40 steps", wraps);
+    printf("grid: the loop-wrap signal fires on step 1, %d times in 40 steps\n",
+           wraps);
+}
+
 // ── reseed request (Task 9, engine half) ─────────────────────────────────────
 
 static void test_reseed_edge() {
@@ -730,6 +940,12 @@ int main() {
     test_gate_knob_ties();
     test_slide_ties_the_gate();
     test_accent_reaches_output();
+    test_first_pulse_plays_step_one();
+    test_density_respects_length();
+    test_shift_rotates_pattern();
+    test_swing_delays_offbeats();
+    test_slide_curve_preserves_arrival();
+    test_loop_wrap_signal();
     test_reseed_edge();
     test_engine_determinism();
 

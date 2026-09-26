@@ -26,8 +26,10 @@ BENCH = ROOT / "docs" / "test-bench.html"
 
 # "## 9. Style zones **[NOW]** — Task 8"
 SECTION_RE = re.compile(r"^## (\d+)\.\s+(.*)$")
-# "| T8.2 | do this | expect that |" — S / T / X / H / G prefixes, dot optional
-TEST_RE = re.compile(r"^\|\s*((?:S|T|X|H|G)\.?[0-9][0-9A-Za-z.]*)\s*\|(.*)\|(.*)\|\s*$")
+# "| T8.2 | do this | expect that |". Any single-letter prefix followed by a
+# digit counts as a test id, so adding a new section with a new prefix does
+# not silently drop its tests from the bench.
+TEST_RE = re.compile(r"^\|\s*([A-Z]\.?[0-9][0-9A-Za-z.]*)\s*\|(.*)\|(.*)\|\s*$")
 
 
 def strip_markdown(text):
