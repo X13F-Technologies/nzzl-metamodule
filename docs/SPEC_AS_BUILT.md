@@ -37,7 +37,7 @@ native CoreProcessor plugin.** The same `src/nzzl.cc` compiles for VCV Rack 2
 | | |
 |---|---|
 | Name / slug | NZZL |
-| Panel width | 16 HP |
+| Panel width | 20 HP |
 | VCV Rack output | `plugin.dylib` |
 | MetaModule output | `NZZL.mmplugin` |
 | Repo | https://github.com/X13F-Technologies/nzzl-metamodule |
@@ -72,8 +72,9 @@ Every input is a no-op when unpatched.
 
 ## Knobs
 
-Eleven controls. △ Two are new (GATE, ACCENT) and one from the original
-requirements is gone (SCALE LOCK).
+Fifteen knobs and one button. △ Six controls are new (SHAPE, PITCH
+OFFSET, SHIFT, SWING, GATE, ACCENT, plus the RANDOM button) and one from
+the original requirements is gone (SCALE LOCK).
 
 | Knob | Range | Default | Behaviour |
 |---|---|---|---|
@@ -86,8 +87,13 @@ requirements is gone (SCALE LOCK).
 | ROOT | C–B | C | Key centre. |
 | SCALE | 0–12 | Natural Minor | △ **13 positions. Position 0 is unquantized**; 1–12 are the twelve scales. |
 | SLIDE | 0.0–1.0 | 0 | Attenuator over the seed-derived slide. CCW = no slide regardless of seed or CV. |
+| SHAPE | 0.0–1.0 | 0.5 | △ **New.** Glide curve: 0 logarithmic, 0.5 linear, 1 exponential. |
 | GATE | 1–200 % | 100 % | △ **New.** Scales the pattern's three note lengths together. |
 | ACCENT | 0–100 % | 100 % | △ **New.** Scales the contrast between the three velocity layers. |
+| PITCH OFFSET | −7…+7 | 0 | △ **New.** Moves the pattern by whole scale degrees, **pre-quantization**, so it stays in key. Overflow carries into the octave. |
+| SHIFT | −8…+8 | 0 | △ **New.** Rotates the whole sixteen-step pattern before the LENGTH window. |
+| SWING | 0–100 % | 0 | △ **New.** Scales the seed's own swing. Delays off-beat sixteenths only, capped at ⅓ of a step. |
+| RANDOM | button | — | △ **New.** Picks a random seed and drives GROUP/SUBGROUP to match — the same thing the RESEED jack does. |
 
 ---
 
@@ -119,9 +125,13 @@ reshuffles the others:
 Plus, per pattern: △ **three gate lengths** — short 0.12–0.30, mid 0.35–0.60,
 long 0.65–0.95 of a clock period.
 
-**RESEED** picks a new seed from a non-deterministic source, regenerates the
-pattern, and **writes the GROUP and SUBGROUP knobs** so what you hear stays
-reproducible by hand. The display flashes amber for 350 ms.
+**RESEED** — the jack or the △ **RANDOM button** — picks a new seed from a
+non-deterministic source and **writes the GROUP and SUBGROUP knobs** so what
+you hear stays reproducible by hand. The display flashes amber for 350 ms.
+
+△ **Seed changes land on the grid.** However the seed changes — knob, button,
+jack or CV — the new pattern is held until the loop wraps, so it always
+starts from its own step 1 rather than dropping in mid-phrase.
 
 **Patch save:** the seed rides on the GROUP/SUBGROUP params, which the host
 saves — including after a reseed, because reseed writes the knobs rather than
@@ -141,8 +151,11 @@ activates exactly N of 16 steps on every seed, the response is linear, and
 density 1 always plays something. Same seed + same density = identical
 output, always. No probability at playback.
 
-*(With LENGTH < 16 the count inside the window is no longer exactly N. This
-is accepted; the knob still feels monotonic.)*
+△ **Density ranks the weights inside the loop window**, not across all
+sixteen steps. Comparing weight to density directly meant that at LENGTH 8
+about half the knob's travel switched on steps the loop never reached and
+nothing was heard. Ranking within the window makes every click audible at
+every length, and is identical to the old behaviour at LENGTH 16.
 
 ---
 
@@ -166,7 +179,13 @@ weights 1–16 are laid along it:
 Laying 1–16 along a permutation of positions is still a permutation, so
 DENSITY stays exactly linear.
 
-**Pitch.** Root-dominated vocabulary, nothing outside it:
+**Pitch.** Root-dominated vocabulary, nothing outside it. △ Stored as
+**intervals in semitones** — root 0, third 3, fourth 5, fifth 7, seventh 10 —
+and resolved to the nearest degree the selected scale actually has, at
+playback. Stored as raw pitch indices (as it was first built) the same index
+means a different degree depending on how many notes the scale has: on a
+triad, "the fifth" landed on the chord's third. Interval-based roles make the
+zone work on every scale and chord alike.
 
 | Degree | Root | Fifth | Third | Seventh | Fourth |
 |---|---|---|---|---|---|
@@ -256,9 +275,14 @@ are fully apart — 7.8 V of measured spread at the output.
 
 ## Rhythm behaviour
 
-All active steps land on even clock subdivisions — no swing, no syncopation
-within a step. The seed determines *which* steps are active, not their
-timing. Clock period is estimated from the time between accepted rising
+△ Active steps land on even clock subdivisions **unless SWING is up**. The
+seed carries its own swing amount, so groove is part of a pattern's identity
+rather than a separate global setting; the knob scales it. Only off-beat
+sixteenths are delayed, never the downbeat, and never by more than a third of
+a step. At SWING 0 the behaviour is exactly what the requirements describe.
+
+The seed determines *which* steps are active, and now also how hard they
+swing — but not their timing within a step. Clock period is estimated from the time between accepted rising
 edges, clamped to 10 ms – 4 s.
 
 ---
@@ -270,9 +294,16 @@ Each step carries a seed-derived slide flag. When a step slides:
 - pitch **glides linearly** from the previous note to this one
 - △ **the gate is held through into the next note** — a slide is a *tie*
 
-Linear rather than exponential so the glide arrives *exactly* (the note ends
-up precisely in tune), cannot overshoot, and "reaches its target within the
-slide time" is a property a test can assert.
+△ Arps slide too. Silencing them was an earlier decision of mine, not
+something the requirements asked for.
+
+△ The **SHAPE** knob morphs the curve from logarithmic (fast off the mark)
+through linear at centre to exponential (slow start, rushing arrival). Every
+curve is `pow(t, k)`, so `t = 1` maps to exactly 1 whatever the knob is
+doing — the note still lands precisely on the quantized target within the
+slide time, and the curve stays monotonic so it can never overshoot. Those
+two guarantees are what made linear the right default in the first place, and
+they survive the knob.
 
 Glide duration = `SLIDE knob × 0.9 × step duration`, so it is tempo-relative
 and always finishes before the next note starts.
@@ -316,6 +347,15 @@ sweep.
 | 4 | Phrygian | 11 | Chromatic |
 | 5 | Mixolydian | 12 | Whole Tone |
 | 6 | Lydian | | |
+
+△ **Positions 13–17 are chords** — minor triad, major triad, minor 7th,
+dominant 7th, minor 9th — where only chord tones play. These are
+**placeholders** until the real chord list arrives; replacing them, or
+dropping scales to make room, is expected.
+
+A chord needs no special handling in the quantizer: it is just a small
+interval set. What it *did* need was the acid vocabulary becoming
+interval-based — see below.
 
 **Index order is an on-disk contract — append only, never reorder.** A saved
 patch stores the index; inserting a scale mid-list would retune every patch
@@ -459,7 +499,9 @@ stays *more* constrained than the random zone, so over-correcting fails too.
 
 ## Known issues — found in the first playtest (2026-09-21)
 
-**Not yet fixed.** Both confirmed by simulation, both waiting on the go-ahead.
+**Both fixed 2026-09-26.** Kept here because the failure modes are worth
+remembering, and because both are now guarded by tests that did not exist
+before.
 
 ### K1. The sequence is one sixteenth late against the clock
 
@@ -476,6 +518,10 @@ be 1), so a divided pattern is three pulses plus one step off the bar.
 
 The harness missed it because `test_clock_advances_steps` checks that steps
 advance, not *which* step fires on the first pulse.
+
+**Fixed.** `test_first_pulse_plays_step_one` now asserts that pulse 1 fires
+step index 0 at clock divisions 1 through 4, and that steps march in order
+from there.
 
 ### K2. At short LENGTH, about half the DENSITY knob does nothing
 
@@ -495,7 +541,12 @@ Measured: fraction of DENSITY clicks (d → d+1) that change nothing audible:
 `DESIGN.md` recorded this as an accepted trade-off ("the knob still feels
 monotonic"). In practice it was the wrong call: at LENGTH 8 the knob is dead
 half the time. The smaller bass/SLIDE effect is ties plus root repetition —
-a new note arrives legato, on the same pitch as the one before it.
+a new note arrives legato, on the same pitch as the one before it, and that
+one is inherent to how 303 lines work rather than a bug.
+
+**Fixed.** Density now ranks within the window.
+`test_density_respects_length` asserts that at every LENGTH from 2 to 16,
+each click adds exactly one more playing step.
 
 ---
 
@@ -505,7 +556,7 @@ a new note arrives legato, on the same pitch as the one before it.
 This section exists so ideas stop living in chat. Each entry records enough
 design thinking that picking it up later does not mean re-deriving it.
 
-### 1. PITCH OFFSET knob — *identified as a real gap*
+### 1. PITCH OFFSET knob — ✅ **built 2026-09-26**, as scale degrees
 
 **The gap.** OCTAVE RANGE controls how many octaves the pattern *spans*, but
 nothing controls where that span *starts*. The pattern always begins at the
@@ -538,7 +589,7 @@ before `intervals[]` is indexed, with the overflow rolling into the octave.
 `octaveForStep()` handles the octave half. Needs a panel position and,
 probably, a CV input to be worth having.
 
-### 2. Slide slope — exponential ↔ logarithmic
+### 2. Slide slope — ✅ **built 2026-09-26** as the SHAPE knob
 
 Slides are currently a **linear ramp**. That was a deliberate choice: linear
 arrives exactly (so the note lands precisely in tune), cannot overshoot, and
@@ -556,7 +607,7 @@ time and never overshoot — otherwise notes end up out of tune and
 the existing `slideProgress` (`pow(t, k)` with k from the knob) keeps both
 properties, since `t = 1` maps to `1` for every k.
 
-### 3. Swing within seeds
+### 3. Swing within seeds — ✅ **built 2026-09-26**
 
 All active steps currently land on even clock subdivisions — the handoff spec
 says so explicitly, and the seed decides *which* steps play, never *when*.
@@ -581,7 +632,7 @@ Gate duration and slide time are both derived from the step duration, so both
 would need to account for a shifted step boundary. Worth scoping carefully;
 it is a bigger change than it sounds.
 
-### 4. Chord positions on the SCALE knob
+### 4. Chord positions on the SCALE knob — ✅ **mechanism built 2026-09-26**, chords are placeholders
 
 Replace some of the scales with chords, so only chord tones play. Chords to
 be supplied.
@@ -601,7 +652,7 @@ triads ship.
 Replacing scales changes the knob's index order. That is fine before
 release, but any patches saved during testing will retune.
 
-### 5. SHIFT knob — rotate the sequence left or right by a step
+### 5. SHIFT knob — ✅ **built 2026-09-26**
 
 A bipolar knob that moves the whole pattern earlier or later by whole steps
 without changing its content — the OFFSET idea from the reference module.
@@ -613,7 +664,7 @@ pattern into the loop), or rotate *within* the window (a pure phase shift of
 what is already playing). The first is more useful and pairs naturally with
 the K2 fix.
 
-### 6. Seed changes land on the grid
+### 6. Seed changes land on the grid — ✅ **built 2026-09-26**
 
 When a new seed arrives — knob turn, RESEED or CV SEED — it should start in
 step with the bar rather than wherever the step counter happens to be.
