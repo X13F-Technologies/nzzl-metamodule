@@ -738,9 +738,115 @@ seed-derived per-step ratchet count (new salt) so a step fires 2–4 times
 inside its slot, for fills. Open: how it interacts with GATE (per hit or per
 step) and with slide.
 
+### 12–16. Ideas from the Sting 2 and TB-3PO study — logged 2026-11-13
+
+Taken from a static read of Sting 2 (Max for Live) and the TB-3PO source
+(Phazerville O_C, MIT). The full write-up is
+`x13f-dsp/docs/PATTERN_GENERATORS.md` (private repo, so only behaviour is
+recorded here, no code or tables). Same rules as 7–11: nothing random at
+playback, existing RNG streams untouched, new seed-derived values on **new
+salts**, and every new control default-off.
+
+**Already covered by NZZL, so not logged as new items:** exact-count,
+nested DENSITY (Sting builds it from one shuffled order; NZZL's weight
+permutation does the same), independent per-lane randomness (NZZL's
+per-attribute streams), and a root-heavy acid bass (the bass zone).
+Sting's 3–5 note **motif cell** belongs with item 9 (NOTES knob): a NOTES cap
+of 3–5 gives the same "small set of notes, reused" identity.
+
+#### 12. Chord input — notes from what is played
+
+**The idea.** A polyphonic V/oct input. The held notes, reduced to pitch
+classes, become the note set the pattern draws from, in place of the SCALE
+position. Register still comes from the octave lane, so the voicing played
+does not matter. Sting's Arp and Bass modes both work this way.
+
+**Why it fits NZZL.** A held chord is just a small interval set, which is
+what the chord positions on the SCALE knob (item 4) already are. The
+quantizer and the interval-based acid roles handle it with no new pitch
+logic: the seed keeps choosing degrees, and the chord decides what those
+degrees are. The pattern stays deterministic for a given seed and chord.
+
+**To settle when building.**
+- **Debounce.** Sting waits about 100 ms after the last change before using
+  a new chord, so rolling a chord in counts once. Also: whether a chord
+  change lands at once or on the loop wrap, like seed changes (item 6).
+- **Empty input.** Fall back to the SCALE knob, or hold the last chord.
+- **Display.** Show the detected chord or root instead of the scale name.
+
+#### 13. Root detection on the chord input, with NZZL's own twist
+
+**The idea.** Detect the root of the held chord and feed it to ROOT, so the
+acid bass resolves around the chord being played rather than the knob. Of
+Sting's modes, only Bass does this.
+
+Sting's method, in outline: every pitch class is scored as a candidate root,
+from how strongly the other notes support it as intervals (fifth and thirds
+strongest), a bonus for fitting a known chord shape (sevenths largest, sixths
+tiny, so C6 reads as Am7), small bonuses for being the lowest or a doubled
+note, and a heavy penalty for not being played. Ties go to the bass note.
+
+**Where NZZL can go further.** Sting's version has four gaps, and closing
+them is the twist:
+- **Memory.** It judges each chord alone, so an ambiguous chord can flip
+  roots from one moment to the next. Add hysteresis: keep the current root
+  unless a new one wins by a clear margin.
+- **Key context.** It ignores the scale. Use the SCALE position to break
+  ties toward roots that are in key.
+- **Confidence.** It returns one answer. Return a confidence too, so a clear
+  C major and a coin-flip can behave differently (for example, only move
+  ROOT when confident).
+- **Our own weights.** Design and tune them ourselves, tested against a
+  table of chords and inversions. Do not reuse Sting's numbers.
+
+**To settle when building.** Whether the detected root overrides ROOT (as
+CV ROOT does) or adds to it, and whether it needs a switch to turn it off.
+
+#### 14. ROOT AMOUNT knob — busy to pure root, nested
+
+**The idea.** One knob that pulls the line toward the root: at 0 the seed
+plays as now, at full every step is the root. Sting's Type knob and Bass
+mode both do a version of this.
+
+**NZZL's version is nested.** Sting rolls each knob position separately, so
+turning the knob changes every note. Instead, give each seed a per-step
+order on a new salt (`SALT_ROOT_FORCE`) and force a step to the root when
+its place in that order is below the knob. Turning it up then only ever
+converts more steps to the root and never moves the ones already converted,
+the same property DENSITY has.
+
+**Interaction to check.** The bass zone is already about 55% root; this knob
+adds to that rather than replacing it.
+
+#### 15. Anti-clumping for slides and accents
+
+**The gap.** NZZL rolls each step's slide and accent independently, at fixed
+per-zone chances. TB-3PO makes a slide or accent less likely on the step
+right after one, which spreads them out and sounds more like a played line.
+
+**The catch.** Changing the rule changes every existing seed's slide and
+accent pattern, which the invariants forbid for saved patches. So it either
+waits for a deliberate pre-release regeneration, arrives as a new style
+zone, or comes as an opt-in that reads a separate stream.
+
+#### 16. Sting-style fresh rolls versus seeds
+
+Gerardo's view, 2026-11-13: he enjoys Sting's pure randomness and has never
+wanted to return to a seed. NZZL already offers that way of playing through
+RESEED and the RANDOM button, which pick a fresh seed on every press. The
+seed system stays as the mechanism that makes a saved patch sound the same;
+see Open questions.
+
 ---
 
 ## Open questions
+
+**Do seeds stay user-facing?** (raised 2026-11-13, item 16). The determinism
+invariants exist so a saved patch always sounds the same, and the seed is how
+that is stored. Dropping recallable seeds would not simplify the generator
+much and would break saved patches. The likely answer is to keep seeds as the
+storage mechanism and treat RESEED / RANDOM as the main way to play, but it
+is Gerardo's call.
 
 **Settled 2026-09-21: SCALE LOCK stays folded into the SCALE knob.** The
 approach is confirmed; if it proves awkward in practice the switch can come
