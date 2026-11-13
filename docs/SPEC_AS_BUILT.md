@@ -852,9 +852,10 @@ patches made during testing is accepted.
   every knob position up front, so turning a knob is instant and returning to
   a position gives the same pattern until the next Generate. This is what
   keeps the knobs stable without a seed.
-- **GROUP and SUBGROUP go.** Their style-zone role (BASS / RAND / ARP and the
-  arp directions) needs a new control, for example a STYLE knob. The freed
-  panel position is open.
+- **GROUP and SUBGROUP go; a STYLE control replaces them** (decided
+  2026-11-13). It selects BASS / RAND / ARP and the arp directions, as a knob
+  or a menu selector. It does **not** need a CV input: Gerardo does not expect
+  to modulate style. The freed panel position is open.
 - **CV SEED goes.** What replaces it on that jack is open.
 - **Display line 1** (group . subgroup) needs new content.
 - **Hashed seeds and salted per-attribute streams go.** They existed so
@@ -864,10 +865,11 @@ patches made during testing is accepted.
   rolls**: density exactness, nesting, rhythm variety across rolls, arp
   direction, scale safety.
 
-**Recommended, to confirm before building: save the rolled pattern.** Sting
-stores the generated pattern in the device, so a saved set still plays what
-you heard. NZZL can do the same through `dataToJson`, which already stores the
-run state. Without it, every reload plays something new.
+**The rolled pattern is saved with the patch** (decided 2026-11-13). As
+Sting does, a saved patch plays what you heard when you saved it. NZZL stores
+it through `dataToJson`, which already holds the run state; that means the
+whole roll (every precomputed row), not just the rows the knobs point at, so
+the knobs still behave the same after a reload.
 
 **Effect on items 7–15.** Their "new salt" wording becomes "its own lane in
 the roll". Item 15 (anti-clumping) loses its catch: with no saved seeds to
@@ -878,10 +880,11 @@ protect, it can simply become the rule.
 ## Open questions
 
 **Settled 2026-11-13: rules replace seeds** (item 16). Generate rolls a
-fresh pattern; knobs pick from rows precomputed at each roll. Still open
-within that: whether the rolled pattern is saved with the patch
-(recommended), what replaces GROUP / SUBGROUP and CV SEED, and what display
-line 1 shows.
+fresh pattern; knobs pick from rows precomputed at each roll. Also settled
+the same day: the rolled pattern is saved with the patch, and a STYLE knob or
+menu selector (no CV) replaces GROUP / SUBGROUP. Still open, to discuss
+later: what replaces CV SEED on its jack, what display line 1 shows, and what
+goes in the freed panel position.
 
 **Settled 2026-09-21: SCALE LOCK stays folded into the SCALE knob.** The
 approach is confirmed; if it proves awkward in practice the switch can come
