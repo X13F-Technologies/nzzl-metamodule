@@ -49,6 +49,13 @@ MetaModule (CI ARM cross-compile) via the SDK's rack-interface shim.
 
 ## Determinism invariants (do not break)
 
+> **Being replaced (decided 2026-11-13).** Gerardo chose rule-based fresh
+> rolls over recallable seeds; see
+> [SPEC_AS_BUILT.md § 16](SPEC_AS_BUILT.md#16-rules-replace-seeds--decided-2026-11-13-not-built-yet).
+> Invariants 1 and 2 go when that is built; 3 and 4 stay (density from one
+> shuffled order per roll; randomness only at Generate). Until it is built,
+> the code still follows all four.
+
 1. **Seed hashing.** `seed_index` (0–1023, from `(group-1)*32 + (subgroup-1)`)
    passes through `hashSeed()` (splitmix32) before entering xorshift.
    *Why:* raw sequential seeds in xorshift32 are heavily correlated — adjacent
