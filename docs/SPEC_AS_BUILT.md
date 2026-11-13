@@ -824,29 +824,64 @@ adds to that rather than replacing it.
 per-zone chances. TB-3PO makes a slide or accent less likely on the step
 right after one, which spreads them out and sounds more like a played line.
 
-**The catch.** Changing the rule changes every existing seed's slide and
-accent pattern, which the invariants forbid for saved patches. So it either
-waits for a deliberate pre-release regeneration, arrives as a new style
-zone, or comes as an opt-in that reads a separate stream.
+**The catch, now lifted.** This changes every existing seed's slide and
+accent pattern, which the old invariants forbade. With rules replacing seeds
+(item 16) that no longer applies, and it can simply become the rule.
 
-#### 16. Sting-style fresh rolls versus seeds
+#### 16. Rules replace seeds — **decided 2026-11-13, not built yet**
 
-Gerardo's view, 2026-11-13: he enjoys Sting's pure randomness and has never
-wanted to return to a seed. NZZL already offers that way of playing through
-RESEED and the RANDOM button, which pick a fresh seed on every press. The
-seed system stays as the mechanism that makes a saved patch sound the same;
-see Open questions.
+**The decision.** Gerardo prefers Sting's approach: every Generate is a fresh
+roll, shaped by rules, with no seed to dial or return to. He has never
+wanted to recall a seed. The seed system and the determinism invariants
+that protect it (`docs/DESIGN.md`) are to be **replaced**, and breaking saved
+patches made during testing is accepted.
+
+**What stays.**
+- **No randomness at playback.** Rolling happens only at Generate (RESEED
+  jack, RANDOM button). `process()` still only reads precomputed steps.
+- **Exact, nested DENSITY.** One shuffled order per roll; density N plays
+  exactly N steps and turning it up only adds steps.
+- **All the rules.** The bass zone's 303 shaping, the arp directions, scales,
+  chord positions, GATE / ACCENT layers, swing, slide: these are the "rules"
+  and carry over unchanged in intent.
+
+**What changes.**
+- **Generate rolls, it does not pick a seed.** RESEED and RANDOM produce a
+  new pattern from a non-deterministic source.
+- **Knobs pick from precomputed rows.** Following Sting, each Generate fills
+  every knob position up front, so turning a knob is instant and returning to
+  a position gives the same pattern until the next Generate. This is what
+  keeps the knobs stable without a seed.
+- **GROUP and SUBGROUP go.** Their style-zone role (BASS / RAND / ARP and the
+  arp directions) needs a new control, for example a STYLE knob. The freed
+  panel position is open.
+- **CV SEED goes.** What replaces it on that jack is open.
+- **Display line 1** (group . subgroup) needs new content.
+- **Hashed seeds and salted per-attribute streams go.** They existed so
+  upgrades would not change saved seeds. Lanes still draw independently
+  within a roll, so knobs on one lane never disturb another.
+- **Tests change from "every one of 1024 seeds" to properties over many
+  rolls**: density exactness, nesting, rhythm variety across rolls, arp
+  direction, scale safety.
+
+**Recommended, to confirm before building: save the rolled pattern.** Sting
+stores the generated pattern in the device, so a saved set still plays what
+you heard. NZZL can do the same through `dataToJson`, which already stores the
+run state. Without it, every reload plays something new.
+
+**Effect on items 7–15.** Their "new salt" wording becomes "its own lane in
+the roll". Item 15 (anti-clumping) loses its catch: with no saved seeds to
+protect, it can simply become the rule.
 
 ---
 
 ## Open questions
 
-**Do seeds stay user-facing?** (raised 2026-11-13, item 16). The determinism
-invariants exist so a saved patch always sounds the same, and the seed is how
-that is stored. Dropping recallable seeds would not simplify the generator
-much and would break saved patches. The likely answer is to keep seeds as the
-storage mechanism and treat RESEED / RANDOM as the main way to play, but it
-is Gerardo's call.
+**Settled 2026-11-13: rules replace seeds** (item 16). Generate rolls a
+fresh pattern; knobs pick from rows precomputed at each roll. Still open
+within that: whether the rolled pattern is saved with the patch
+(recommended), what replaces GROUP / SUBGROUP and CV SEED, and what display
+line 1 shows.
 
 **Settled 2026-09-21: SCALE LOCK stays folded into the SCALE knob.** The
 approach is confirmed; if it proves awkward in practice the switch can come
