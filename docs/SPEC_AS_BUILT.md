@@ -675,6 +675,69 @@ step 1, the way clip launching is quantized in a DAW. There is no RESET
 input, so how well it lines up with an *external* bar still depends on when
 the module started.
 
+### 7–11. Ideas from the TGB-420 Sequencer study — logged 2026-11-13
+
+Taken from a static read of the TGB-420 Sequencer (Max for Live); the full
+write-up is `x13f-dsp/docs/TGB_420.md` (private repo, so only behaviour is
+recorded here, no code). Each is phrased to keep NZZL's invariants: nothing
+random at playback, existing RNG streams untouched, new seed-derived values
+on **new salts**, and every new control default-off so existing patches play
+exactly as before.
+
+#### 7. Separate pitch lane — **agreed 2026-11-13, next to build**
+
+**The gap.** `advanceStep` reads pitch from the same step as the rhythm, so
+turning DENSITY up changes *which pitches* play as well as how many notes.
+On a 303 the pitch sequence advances only when a note plays.
+
+**The idea.** A pitch counter that advances **once per played note**, not
+per step, reading the seed's sixteen pitches in order. DENSITY then becomes
+a rhythm-only control: the melody keeps its order and just gets more or
+fewer hits. An optional **PITCH LENGTH** (separate from LENGTH, 0 = linked)
+wraps that counter at its own length, giving polymeter: e.g. 5 pitches
+cycling over a 16-step rhythm. Slide and octave go with the pitch.
+
+**To settle when building.** Whether "advance per note" becomes the new
+default (it changes every existing patch's sound, so probably opt-in), what
+resets the pitch counter (loop wrap, seed change, RUN), and how SHIFT applies
+to it.
+
+#### 8. Generative evolve — **agreed in principle 2026-11-13, design to discuss**
+
+TGB applies **one small mutation every N bars** (one stage's pitch, or its
+mode / length / divider / gate). For NZZL it would have to be deterministic:
+mutation k drawn from a new `SALT_EVOLVE` stream keyed on the seed and the
+loop count, so the same patch drifts the same way from a reset. Open: NZZL
+deliberately does not save the step position, so drift restarts on reload;
+whether that is fine, what the controls are (rate, what may mutate), and
+whether a reseed or RUN resets it. Gerardo wants to discuss the design when
+this is implemented.
+
+#### 9. NOTES knob — a nested cap on distinct pitches
+
+Rank the seed's pitches by first appearance and limit the line to the first
+N distinct ones, so turning NOTES up only ever *adds* a pitch and never swaps
+one out — the same nesting DENSITY's permutation gives. TGB does this by
+re-rolling; NZZL's version is a pure read-side filter, no new stream.
+
+#### 10. More interval vocabularies (pools)
+
+TGB's pools are small interval sets chosen for character: Power (root + 5th),
+Tension (root + minor 2nd), Hypnotic (root + m2 + m3), Dark (root + m2 + 5th
++ octave). NZZL's acid roles and the chord positions already resolve interval
+sets through `nearestDegree`, so a vocabulary is just a new set. **Catch:**
+`nearestDegree` picks the nearest degree (ties down), so a minor 2nd on a
+scale without one collapses onto the root. TGB avoids that by moving a
+missing pool note **up** to the next scale note when generating; such a
+vocabulary would need that rule.
+
+#### 11. Ratchets
+
+TGB's "a note every pulse, thinned by a ÷1–÷4 divider" mode. For NZZL: a new
+seed-derived per-step ratchet count (new salt) so a step fires 2–4 times
+inside its slot, for fills. Open: how it interacts with GATE (per hit or per
+step) and with slide.
+
 ---
 
 ## Open questions
