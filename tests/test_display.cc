@@ -1,5 +1,5 @@
 // Native test harness for the panel display text (Task 11). The pixels are
-// hardware's problem; the strings are testable here, for every seed.
+// hardware's problem; the strings are testable here, for every combination.
 
 #include "../src/display.hh"
 #include <cstdio>
@@ -19,64 +19,59 @@ static int failures = 0;
 
 using namespace nzzl;
 
-// Every one of the 1024 seeds must render a correct, terminated, non-empty
-// seed and zone label.
-static void test_all_seeds_render() {
-    for (int seed = 0; seed < NUM_SEEDS; seed++) {
-        DisplayText d;
-        buildDisplay(seed, SCALE_NAT_MINOR, 0, d);
+// Line 1: every density x length renders "d/l" — the effective density,
+// clamped to the loop the way the engine clamps it — with no leading zeros.
+static void test_steps_line() {
+    int cases = 0;
+    for (int length = 2; length <= MAX_STEPS; length++)
+        for (int density = 1; density <= MAX_STEPS; density++) {
+            DisplayText d;
+            buildDisplay(density, length, STYLE_POS_BASS, SCALE_NAT_MINOR, 0, d);
+            CHECK(strnlen(d.steps, DISPLAY_LEN) < DISPLAY_LEN, "unterminated steps text");
+            CHECK(strnlen(d.style, DISPLAY_LEN) < DISPLAY_LEN, "unterminated style text");
+            CHECK(strnlen(d.scale, DISPLAY_LEN) < DISPLAY_LEN, "unterminated scale text");
+            CHECK(d.steps[0] && d.style[0] && d.scale[0], "empty display line");
 
-        CHECK(strnlen(d.seed, DISPLAY_LEN) < DISPLAY_LEN, "seed %d: unterminated seed text", seed);
-        CHECK(strnlen(d.zone, DISPLAY_LEN) < DISPLAY_LEN, "seed %d: unterminated zone text", seed);
-        CHECK(strnlen(d.scale, DISPLAY_LEN) < DISPLAY_LEN, "seed %d: unterminated scale text", seed);
-        CHECK(d.seed[0] && d.zone[0] && d.scale[0], "seed %d: empty display line", seed);
-
-        // The spec's format is "4 . 7" — no leading zeros.
-        int g = 0, sg = 0;
-        seedKnobsFor(seed, g, sg);
-        char expect[DISPLAY_LEN];
-        int n = 0;
-        if (g >= 10) expect[n++] = char('0' + g / 10);
-        expect[n++] = char('0' + g % 10);
-        expect[n++] = ' '; expect[n++] = '.'; expect[n++] = ' ';
-        if (sg >= 10) expect[n++] = char('0' + sg / 10);
-        expect[n++] = char('0' + sg % 10);
-        expect[n] = '\0';
-        CHECK(strcmp(d.seed, expect) == 0,
-              "seed %d: got \"%s\", expected \"%s\"", seed, d.seed, expect);
-
-        const char* zone = styleName(seed);
-        CHECK(strcmp(d.zone, zone) == 0,
-              "seed %d: zone \"%s\", expected \"%s\"", seed, d.zone, zone);
-    }
-    printf("display: all %d seeds render a correct \"g . s\" and zone label\n",
-           NUM_SEEDS);
+            const int eff = density < length ? density : length;
+            char expect[DISPLAY_LEN];
+            int n = 0;
+            if (eff >= 10) expect[n++] = char('0' + eff / 10);
+            expect[n++] = char('0' + eff % 10);
+            expect[n++] = '/';
+            if (length >= 10) expect[n++] = char('0' + length / 10);
+            expect[n++] = char('0' + length % 10);
+            expect[n] = '\0';
+            CHECK(strcmp(d.steps, expect) == 0,
+                  "density %d length %d: got \"%s\", expected \"%s\"",
+                  density, length, d.steps, expect);
+            cases++;
+        }
+    DisplayText d;
+    buildDisplay(8, 16, 0, SCALE_NAT_MINOR, 0, d);
+    CHECK(strcmp(d.steps, "8/16") == 0, "default shows \"%s\", expected \"8/16\"", d.steps);
+    printf("display: line 1 renders density/length for all %d combinations\n", cases);
 }
 
-// The zone label must actually track the three style zones.
-static void test_zone_labels() {
+// Line 2: the STYLE position, one distinct label each.
+static void test_style_labels() {
     DisplayText d;
-    buildDisplay(0, SCALE_NAT_MINOR, 0, d);
-    CHECK(strcmp(d.zone, "BASS") == 0, "group 1 shows \"%s\"", d.zone);
-    buildDisplay(10 * 32, SCALE_NAT_MINOR, 0, d);
-    CHECK(strcmp(d.zone, "RAND") == 0, "group 11 shows \"%s\"", d.zone);
+    buildDisplay(8, 16, STYLE_POS_BASS, SCALE_NAT_MINOR, 0, d);
+    CHECK(strcmp(d.style, "BASS") == 0, "BASS shows \"%s\"", d.style);
+    buildDisplay(8, 16, STYLE_POS_RAND, SCALE_NAT_MINOR, 0, d);
+    CHECK(strcmp(d.style, "RAND") == 0, "RAND shows \"%s\"", d.style);
     // The four arp directions must each get their own arrow, per the spec.
-    const char* seen[4];
-    int base = 21 * 32;
-    for (int k = 0; k < 4; k++) {
-        buildDisplay(base + k * 8, SCALE_NAT_MINOR, 0, d);
-        CHECK(strncmp(d.zone, "ARP", 3) == 0,
-              "arp subgroup %d shows \"%s\"", k * 8 + 1, d.zone);
-        seen[k] = getScale(0).name;   // placeholder, compared below by rebuild
-        for (int j = 0; j < k; j++) {
+    for (int k = STYLE_POS_ARP_UP; k <= STYLE_POS_ARP_DOWNUP; k++) {
+        buildDisplay(8, 16, k, SCALE_NAT_MINOR, 0, d);
+        CHECK(strncmp(d.style, "ARP", 3) == 0, "STYLE %d shows \"%s\"", k, d.style);
+        CHECK(strcmp(d.style, styleName(k)) == 0, "STYLE %d label mismatch", k);
+        for (int j = STYLE_POS_ARP_UP; j < k; j++) {
             DisplayText e;
-            buildDisplay(base + j * 8, SCALE_NAT_MINOR, 0, e);
-            CHECK(strcmp(d.zone, e.zone) != 0,
-                  "arp modes %d and %d share the label \"%s\"", j, k, d.zone);
+            buildDisplay(8, 16, j, SCALE_NAT_MINOR, 0, e);
+            CHECK(strcmp(d.style, e.style) != 0,
+                  "STYLE %d and %d share the label \"%s\"", j, k, d.style);
         }
     }
-    (void)seen;
-    printf("display: zone label covers BASS, RAND and the four arp directions\n");
+    printf("display: style label covers BASS, RAND and the four arp directions\n");
 }
 
 // Root and scale together, including the unquantized position.
@@ -84,7 +79,7 @@ static void test_scale_line() {
     DisplayText d;
     for (int root = 0; root < 12; root++) {
         for (int sc = 0; sc < NUM_SCALES; sc++) {
-            buildDisplay(0, sc, root, d);
+            buildDisplay(8, 16, 0, sc, root, d);
             char expect[DISPLAY_LEN * 2];
             int n = 0;
             for (const char* p = NOTE_NAMES[root]; *p; p++) expect[n++] = *p;
@@ -97,7 +92,7 @@ static void test_scale_line() {
         }
     }
     // position 0 must read RAW, not pretend to be a scale
-    buildDisplay(0, SCALE_RAW, 7, d);
+    buildDisplay(8, 16, 0, SCALE_RAW, 7, d);
     CHECK(strcmp(d.scale, "G RAW") == 0,
           "unquantized shows \"%s\", expected \"G RAW\"", d.scale);
     printf("display: scale line covers all 12 roots x %d positions, RAW included\n",
@@ -107,12 +102,14 @@ static void test_scale_line() {
 // Out-of-range inputs must clamp rather than write past the buffers.
 static void test_clamping() {
     DisplayText d;
-    buildDisplay(-50, -3, -9, d);
-    CHECK(strcmp(d.seed, "1 . 1") == 0, "negative seed rendered \"%s\"", d.seed);
+    buildDisplay(-50, -50, -3, -3, -9, d);
+    CHECK(strcmp(d.steps, "1/2") == 0, "negative density/length rendered \"%s\"", d.steps);
+    CHECK(strcmp(d.style, "BASS") == 0, "negative style rendered \"%s\"", d.style);
     CHECK(d.scale[0] == 'C', "negative root did not clamp: \"%s\"", d.scale);
 
-    buildDisplay(99999, 99, 99, d);
-    CHECK(strcmp(d.seed, "32 . 32") == 0, "huge seed rendered \"%s\"", d.seed);
+    buildDisplay(99999, 99999, 99, 99, 99, d);
+    CHECK(strcmp(d.steps, "16/16") == 0, "huge density/length rendered \"%s\"", d.steps);
+    CHECK(strcmp(d.style, styleName(NUM_STYLES - 1)) == 0, "huge style rendered \"%s\"", d.style);
     CHECK(strnlen(d.scale, DISPLAY_LEN) < DISPLAY_LEN, "huge scale index overran");
 
     // a long label must truncate inside the buffer, never past it
@@ -121,12 +118,12 @@ static void test_clamping() {
     CHECK(n == DISPLAY_LEN - 1, "appendStr wrote %d chars, expected %d",
           n, DISPLAY_LEN - 1);
     CHECK(buf[DISPLAY_LEN - 1] == '\0', "appendStr did not terminate at the limit");
-    printf("display: out-of-range seeds, roots and long labels all clamp safely\n");
+    printf("display: out-of-range densities, styles, roots and long labels all clamp safely\n");
 }
 
 int main() {
-    test_all_seeds_render();
-    test_zone_labels();
+    test_steps_line();
+    test_style_labels();
     test_scale_line();
     test_clamping();
 

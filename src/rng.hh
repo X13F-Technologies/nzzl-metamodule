@@ -1,7 +1,8 @@
 #pragma once
 #include <cstdint>
 
-// Xorshift32 — deterministic, no stdlib rand()
+// Xorshift32 — deterministic, no stdlib rand(). Each lane of a roll runs one,
+// started from that lane's fresh 32-bit draw (see RollEntropy in pattern.hh).
 struct Xorshift32 {
     uint32_t state;
 

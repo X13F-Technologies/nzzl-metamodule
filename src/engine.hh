@@ -11,8 +11,8 @@
 // (slide) when timing logic gets harder to eyeball" — this is that moment.
 // nzzl.cc now only maps params/jacks onto Engine; every decision lives here.
 //
-// Determinism: Engine NEVER generates randomness. A reseed trigger only sets
-// `reseedRequested`; the adapter is what picks a new seed. That keeps the one
+// Determinism: Engine NEVER generates randomness. A RESEED trigger only sets
+// `generateRequested`; the adapter is what rolls a new pattern. That keeps the one
 // non-deterministic moment in the module outside the pure layer.
 
 namespace nzzl {
@@ -59,7 +59,7 @@ struct EngineParams {
     float gate     = 1.f;      // GATE knob as a factor: 1..200 -> 0.01..2.0
     float accent   = 1.f;      // ACCENT knob 0..100 -> 0..1
     int   shift    = 0;        // SHIFT knob: rotate the pattern by whole steps
-    float swing    = 0.f;      // SWING knob, 0..1, scales the seed's own swing
+    float swing    = 0.f;      // SWING knob, 0..1, scales the roll's own swing
     QuantizeParams quant{};
 };
 
@@ -107,15 +107,15 @@ struct Engine {
 
     Trigger clockTrig, runTrig, reseedTrig;
 
-    // Set on a reseed rising edge; the adapter acts on it and clears it.
-    bool reseedRequested = false;
+    // Set on a RESEED rising edge (Generate); the adapter rolls and clears it.
+    bool generateRequested = false;
 
     // A step waiting out its swing delay before it fires.
     bool  stepPending   = false;
     float pendingTimer  = 0.f;
 
     // True on the sample the loop wraps back to step 0. The adapter uses it
-    // to land a queued seed change on the grid instead of mid-phrase.
+    // to land a queued roll or STYLE change on the grid instead of mid-phrase.
     bool loopWrapped = false;
 
     void reset() {
@@ -128,7 +128,7 @@ struct Engine {
         const int clockDiv = p.clockDiv < 1 ? 1 : p.clockDiv;
 
         if (in.reseedConnected && reseedTrig.process(in.reseed))
-            reseedRequested = true;
+            generateRequested = true;
 
         if (in.runConnected) {
             if (runTrig.process(in.run))
@@ -264,7 +264,7 @@ private:
         // Past 100% a note runs into the next step and ties.
         float gateFrac = pat.gateLengths[gi] * gateKnob;
 
-        // Seed flag + CV, then the attenuator — see cv.hh for why the sum
+        // Step flag + CV, then the attenuator — see cv.hh for why the sum
         // happens here and not upstream.
         const float slideAmt = slideForStep(st.slide, p.slideCv, p.slideKnob);
         const bool  tied     = slideAmt > 0.f;

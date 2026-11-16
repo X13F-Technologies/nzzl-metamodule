@@ -1,5 +1,5 @@
-// Native test harness for the seed<->knob round trip (Task 9) and the CV
-// input mappings (Task 10). No Rack deps.
+// Native test harness for the CV input mappings (Task 10; CV DENSITY from
+// item 16, replacing CV SEED). No Rack deps.
 
 #include "../src/cv.hh"
 #include <cstdio>
@@ -20,52 +20,12 @@ static int failures = 0;
 
 using namespace nzzl;
 
-// ── Task 9: seed <-> knob round trip ────────────────────────────────────────
-//
-// RESEED picks a seed and must drive the knobs to match it. If this mapping
-// is not an exact bijection, a reseeded pattern stops being reproducible by
-// hand — which is the module's core promise.
-static void test_seed_knob_roundtrip() {
-    for (int seed = 0; seed < NUM_SEEDS; seed++) {
-        int g = 0, sg = 0;
-        seedKnobsFor(seed, g, sg);
-        CHECK(g >= 1 && g <= NUM_GROUPS, "seed %d gave group %d", seed, g);
-        CHECK(sg >= 1 && sg <= SEEDS_PER_GROUP, "seed %d gave subgroup %d", seed, sg);
-        CHECK(seedIndexFor(g, sg) == seed,
-              "seed %d -> (%d, %d) -> %d: round trip broken",
-              seed, g, sg, seedIndexFor(g, sg));
-    }
-    // and the other direction: every knob pair maps to a distinct seed
-    bool seen[NUM_SEEDS] = {};
-    for (int g = 1; g <= NUM_GROUPS; g++) {
-        for (int sg = 1; sg <= SEEDS_PER_GROUP; sg++) {
-            int idx = seedIndexFor(g, sg);
-            CHECK(idx >= 0 && idx < NUM_SEEDS, "(%d,%d) gave seed %d", g, sg, idx);
-            CHECK(!seen[idx], "(%d,%d) collides on seed %d", g, sg, idx);
-            seen[idx] = true;
-        }
-    }
-    for (int i = 0; i < NUM_SEEDS; i++)
-        CHECK(seen[i], "seed %d is unreachable from the knobs", i);
-
-    // out-of-range inputs must clamp rather than compute a bogus seed
-    CHECK(seedIndexFor(0, 0) == 0, "low knobs did not clamp");
-    CHECK(seedIndexFor(99, 99) == NUM_SEEDS - 1, "high knobs did not clamp");
-    int g2 = 0, sg2 = 0;
-    seedKnobsFor(-5, g2, sg2);
-    CHECK(g2 == 1 && sg2 == 1, "negative seed did not clamp");
-    seedKnobsFor(99999, g2, sg2);
-    CHECK(g2 == NUM_GROUPS && sg2 == SEEDS_PER_GROUP, "huge seed did not clamp");
-    printf("seed round trip: all %d seeds <-> knobs bijective, clamps safely\n",
-           NUM_SEEDS);
-}
-
 // ── Unpatched inputs must change nothing ────────────────────────────────────
 static void test_unpatched_is_neutral() {
     for (float v = -12.f; v <= 12.f; v += 0.37f) {
         CHECK(applyScaleCv(5, v, false) == 5, "unpatched CV SCALE moved the scale");
         CHECK(applyRootCv(7, v, false) == 7,  "unpatched CV ROOT moved the root");
-        CHECK(applySeedCv(300, v, false) == 300, "unpatched CV SEED moved the seed");
+        CHECK(applyDensityCv(5, v, false) == 5, "unpatched CV DENSITY moved the density");
         CHECK(cvSlideAmount(v, false) == 0.f, "unpatched CV SLIDE contributed slide");
         CHECK(std::fabs(slideForStep(true, cvSlideAmount(v, false), 0.4f) - 0.4f) < 1e-5f,
               "unpatched CV SLIDE changed a flagged step's slide");
@@ -149,31 +109,43 @@ static void test_cv_root_never_dequantizes() {
     printf("CV root: a smooth ramp stays on the grid and in key at every point\n");
 }
 
-// ── CV SEED: offset, wraps ──────────────────────────────────────────────────
-static void test_cv_seed() {
-    CHECK(applySeedCv(0, 0.f, true) == 0, "0 V should not offset the seed");
-    CHECK(applySeedCv(0, 10.f, true) == 0, "10 V is a full range and should wrap to 0");
-    CHECK(applySeedCv(0, 5.f, true) == NUM_SEEDS / 2, "5 V should be half the range");
-    CHECK(applySeedCv(100, -1.f, true) == ((100 - 102) % NUM_SEEDS + NUM_SEEDS) % NUM_SEEDS,
-          "negative CV did not wrap correctly");
+// ── CV DENSITY: offset, 10 V = the full 1–16 range, clamped ─────────────────
+static void test_cv_density() {
+    CHECK(applyDensityCv(8, 0.f, true) == 8, "0 V should not offset the density");
+    CHECK(applyDensityCv(1, 10.f, true) == 16, "+10 V from 1 should reach 16");
+    CHECK(applyDensityCv(16, -10.f, true) == 1, "-10 V from 16 should reach 1");
+    CHECK(applyDensityCv(1, 5.f, true) == 9, "+5 V is half the range (7.5, rounds to 8 steps)");
+    CHECK(applyDensityCv(8, 2.f, true) == 11, "+2 V should add 3 steps");
+    CHECK(applyDensityCv(8, -2.f, true) == 5, "-2 V should remove 3 steps");
+    // clamped, never wrapped: past the ends it parks
+    CHECK(applyDensityCv(16, 3.f, true) == 16, "over the top did not clamp");
+    CHECK(applyDensityCv(1, -3.f, true) == 1, "under the bottom did not clamp");
+    CHECK(applyDensityCv(8, 50.f, true) == 16 && applyDensityCv(8, -50.f, true) == 1,
+          "extreme CV did not clamp");
 
-    for (float v = -30.f; v <= 30.f; v += 0.11f) {
-        for (int knob : {0, 1, 511, 1023}) {
-            int r = applySeedCv(knob, v, true);
-            CHECK(r >= 0 && r < NUM_SEEDS, "knob %d at %.2f V gave seed %d", knob, v, r);
+    // always in range, and monotonic in the voltage (a sweep only ever adds
+    // or removes hits — with nested DENSITY it never reshuffles them)
+    for (int knob = 1; knob <= 16; knob++) {
+        int prev = 0;
+        for (float v = -12.f; v <= 12.f; v += 0.01f) {
+            const int r = applyDensityCv(knob, v, true);
+            CHECK(r >= 1 && r <= 16, "knob %d at %.2f V gave density %d", knob, v, r);
+            CHECK(r >= prev, "knob %d: density fell from %d to %d as CV rose to %.2f V",
+                  knob, prev, r, v);
+            prev = r;
         }
     }
-    // sweeping ±5 V from the middle should reach the whole range
-    bool reached[NUM_SEEDS] = {};
-    for (float v = -5.f; v <= 5.f; v += 0.001f)
-        reached[applySeedCv(512, v, true)] = true;
+    // a 0-10 V sweep from the bottom reaches every density
+    bool reached[17] = {};
+    for (float v = 0.f; v <= 10.f; v += 0.001f)
+        reached[applyDensityCv(1, v, true)] = true;
     int missing = 0;
-    for (int i = 0; i < NUM_SEEDS; i++) if (!reached[i]) missing++;
-    CHECK(missing == 0, "%d seeds unreachable by a +/-5 V sweep", missing);
-    printf("CV seed: offset, wraps, a +/-5 V sweep reaches all %d seeds\n", NUM_SEEDS);
+    for (int d = 1; d <= 16; d++) if (!reached[d]) missing++;
+    CHECK(missing == 0, "%d densities unreachable by a 0-10 V sweep", missing);
+    printf("CV density: offset, clamped, monotonic; 0-10 V reaches all 16\n");
 }
 
-// ── CV SLIDE: summed with the seed flag, then attenuated ────────────────────
+// ── CV SLIDE: summed with the step flag, then attenuated ────────────────────
 static void test_cv_slide() {
     // the jack's own contribution
     CHECK(cvSlideAmount(0.f, true) == 0.f, "0 V contributed slide");
@@ -194,7 +166,7 @@ static void test_cv_slide() {
           "a flagged step at full knob is not full slide");
     CHECK(std::fabs(slideForStep(true, 1.f, 1.f) - 1.f) < 1e-5f,
           "CV pushed a flagged step past full slide");
-    // CV puts glide on steps the seed did NOT flag — the useful direction
+    // CV puts glide on steps the roll did NOT flag — the useful direction
     CHECK(slideForStep(false, 0.f, 1.f) == 0.f,
           "an unflagged step slid with no CV");
     CHECK(std::fabs(slideForStep(false, 0.5f, 1.f) - 0.5f) < 1e-5f,
@@ -210,16 +182,15 @@ static void test_cv_slide() {
                 float r = slideForStep(f != 0, cv, k);
                 CHECK(r >= 0.f && r <= 1.f, "slide %f out of 0..1", r);
             }
-    printf("CV slide: summed with the seed flag then attenuated; CCW always kills it\n");
+    printf("CV slide: summed with the step flag then attenuated; CCW always kills it\n");
 }
 
 int main() {
-    test_seed_knob_roundtrip();
     test_unpatched_is_neutral();
     test_cv_scale();
     test_cv_root();
     test_cv_root_never_dequantizes();
-    test_cv_seed();
+    test_cv_density();
     test_cv_slide();
 
     if (failures) {
