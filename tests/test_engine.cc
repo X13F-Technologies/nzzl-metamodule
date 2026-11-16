@@ -4,6 +4,7 @@
 // is now machine-checked.
 
 #include "../src/engine.hh"
+#include "rolls.hh"
 #include <cstdio>
 #include <cmath>
 #include <initializer_list>
@@ -21,6 +22,7 @@ static int failures = 0;
     } while (0)
 
 using namespace nzzl;
+using namespace nzzl_test;
 
 static const float SR = 48000.f;
 static const float DT = 1.f / SR;
@@ -59,7 +61,7 @@ static void run(Engine& e, Clock& clk, const Pattern& pat,
 
 static void test_clock_advances_steps() {
     Pattern pat;
-    generatePattern(0, pat);
+    patternFor(0, STYLE_POS_BASS, pat);
     EngineParams p;              // density 8, length 16, div 1
 
     Engine e;
@@ -81,7 +83,7 @@ static void test_clock_advances_steps() {
 
 static void test_clock_divide() {
     Pattern pat;
-    generatePattern(0, pat);
+    patternFor(0, STYLE_POS_BASS, pat);
 
     for (int div = 1; div <= 8; div++) {
         EngineParams p;
@@ -103,7 +105,7 @@ static void test_clock_divide() {
 
 static void test_length_wraps() {
     Pattern pat;
-    generatePattern(7, pat);
+    patternFor(7, STYLE_POS_BASS, pat);
 
     for (int len = 2; len <= MAX_STEPS; len++) {
         EngineParams p;
@@ -133,7 +135,7 @@ static void test_length_wraps() {
 
 static void test_run_toggle() {
     Pattern pat;
-    generatePattern(3, pat);
+    patternFor(3, STYLE_POS_BASS, pat);
     EngineParams p;
 
     Engine e;
@@ -193,7 +195,7 @@ static void test_run_toggle() {
 // Gate duration must equal gateLength x clock period x clockDiv.
 static void test_gate_duration() {
     Pattern pat;
-    generatePattern(0, pat);
+    patternFor(0, STYLE_POS_BASS, pat);
     const StepData* s = pat.steps;
     EngineParams p;
     p.density = MAX_STEPS;       // every step fires
@@ -240,7 +242,7 @@ static void test_gate_duration() {
 // single gate says nothing.
 static void test_gate_scales_with_tempo() {
     Pattern pat;
-    generatePattern(11, pat);
+    patternFor(11, STYLE_POS_BASS, pat);
     EngineParams p;
     p.density = MAX_STEPS;       // every step fires
 
@@ -272,9 +274,9 @@ static void test_gate_scales_with_tempo() {
 
 // Density gating: only steps whose weight <= density may fire.
 static void test_density_gating() {
-    for (int seed = 0; seed < 64; seed++) {
+    for (int roll = 0; roll < 64; roll++) {
         Pattern pat;
-        generatePattern(seed, pat);
+        anyPatternFor(roll, pat);
         const StepData* s = pat.steps;
         for (int density : {1, 4, 8, 16}) {
             EngineParams p;
@@ -293,22 +295,22 @@ static void test_density_gating() {
                 if (fired[i]) {
                     count++;
                     CHECK(s[i].weight <= density,
-                          "seed %d density %d: step %d fired with weight %d",
-                          seed, density, i, s[i].weight);
+                          "roll %d density %d: step %d fired with weight %d",
+                          roll, density, i, s[i].weight);
                 }
             }
             CHECK(count == density,
-                  "seed %d density %d: %d steps fired", seed, density, count);
+                  "roll %d density %d: %d steps fired", roll, density, count);
         }
     }
-    printf("density: exactly N steps fire a gate at density N, 64 seeds\n");
+    printf("density: exactly N steps fire a gate at density N, 64 rolls\n");
 }
 
 // ── velocity and pitch sample-and-hold ───────────────────────────────────────
 
 static void test_sample_and_hold() {
     Pattern pat;
-    generatePattern(0, pat);
+    patternFor(0, STYLE_POS_BASS, pat);
     EngineParams p;
     p.density = 4;               // most steps silent, so holding is visible
 
@@ -341,7 +343,7 @@ static void test_sample_and_hold() {
 // Velocity output must stay in 0–10 V.
 static void test_velocity_range() {
     Pattern pat;
-    generatePattern(5, pat);
+    patternFor(5, STYLE_POS_BASS, pat);
     EngineParams p;
     Engine e;
     Clock clk(0.02f);
@@ -358,7 +360,7 @@ static void test_velocity_range() {
 // SLIDE at 0 must be indistinguishable from the pre-slide module.
 static void test_slide_zero_is_instant() {
     Pattern pat;
-    generatePattern(0, pat);
+    patternFor(0, STYLE_POS_BASS, pat);
     EngineParams p;
     p.slideKnob = 0.f;
     p.density = MAX_STEPS;
@@ -385,9 +387,9 @@ static void test_slide_reaches_target() {
     p.slideKnob = 1.f;               // longest glide
 
     int slidesChecked = 0;
-    for (int seed = 0; seed < 32; seed++) {
+    for (int roll = 0; roll < 32; roll++) {   // BASS rows: ties are common
         Pattern pat;
-        generatePattern(seed, pat);
+        patternFor(roll, STYLE_POS_BASS, pat);
 
         Engine e;
         Clock clk(0.2f);
@@ -414,15 +416,15 @@ static void test_slide_reaches_target() {
                 float lo = from < target ? from : target;
                 float hi = from < target ? target : from;
                 CHECK(o.pitch >= lo - EPS && o.pitch <= hi + EPS,
-                      "seed %d: slide overshot (%.4f not in [%.4f, %.4f])",
-                      seed, o.pitch, lo, hi);
+                      "roll %d: slide overshot (%.4f not in [%.4f, %.4f])",
+                      roll, o.pitch, lo, hi);
                 if (e.slideProgress >= 1.f) {
                     CHECK(std::fabs(o.pitch - target) < EPS,
-                          "seed %d: slide ended at %.4f, target %.4f",
-                          seed, o.pitch, target);
+                          "roll %d: slide ended at %.4f, target %.4f",
+                          roll, o.pitch, target);
                     CHECK(elapsed <= 0.2f * SLIDE_MAX_FRACTION + 0.01f,
-                          "seed %d: slide took %.4f s, longer than the step",
-                          seed, elapsed);
+                          "roll %d: slide took %.4f s, longer than the step",
+                          roll, elapsed);
                     slidesChecked++;
                     sliding = false;
                 }
@@ -431,7 +433,7 @@ static void test_slide_reaches_target() {
         });
     }
     CHECK(slidesChecked > 20,
-          "only %d slides observed across 32 seeds — is slide firing at all?",
+          "only %d slides observed across 32 rolls — is slide firing at all?",
           slidesChecked);
     printf("slide: %d glides all reached target exactly, no overshoot, "
            "within one step\n", slidesChecked);
@@ -440,7 +442,7 @@ static void test_slide_reaches_target() {
 // Longer SLIDE settings must produce longer glides.
 static void test_slide_knob_scales() {
     Pattern pat;
-    generatePattern(0, pat);
+    patternFor(0, STYLE_POS_BASS, pat);
 
     auto measure = [&](float amount) {
         EngineParams p;
@@ -471,7 +473,7 @@ static void test_slide_knob_scales() {
 // clock, so the feel survives a tempo change.
 static void test_slide_follows_tempo() {
     Pattern pat;
-    generatePattern(0, pat);
+    patternFor(0, STYLE_POS_BASS, pat);
 
     auto measure = [&](float period) {
         EngineParams p;
@@ -505,7 +507,7 @@ static void test_slide_follows_tempo() {
 // The knob must scale gate duration proportionally, and the three lengths
 // must stay distinguishable.
 static void test_gate_knob_scales() {
-    Pattern pat; generatePattern(400, pat);      // a random-zone seed
+    Pattern pat; patternFor(400, STYLE_POS_RAND, pat);
     auto averageGate = [&](float gateKnob) {
         EngineParams p;
         p.density = MAX_STEPS;
@@ -542,7 +544,7 @@ static void test_gate_knob_scales() {
 // well under a step. So GATE morphs a pattern from staccato toward partly
 // legato rather than flipping everything to tied at once.
 static void test_gate_knob_ties() {
-    Pattern pat; generatePattern(400, pat);
+    Pattern pat; patternFor(400, STYLE_POS_RAND, pat);
     auto gapCount = [&](float gateKnob) {
         EngineParams p;
         p.density = MAX_STEPS;        // every step fires, so any gap is a real one
@@ -578,7 +580,7 @@ static void test_gate_knob_ties() {
 // A 303 slide IS a tie: a slid step must not drop its gate before the next
 // note starts, even at a short GATE setting.
 static void test_slide_ties_the_gate() {
-    Pattern pat; generatePattern(0, pat);        // a bass seed — ties are common
+    Pattern pat; patternFor(0, STYLE_POS_BASS, pat);   // ties are common in BASS
     EngineParams p;
     p.density = MAX_STEPS;
     p.gate = 0.3f;                               // deliberately short notes
@@ -627,7 +629,7 @@ static void test_slide_ties_the_gate() {
 
 // ACCENT must reach the velocity output.
 static void test_accent_reaches_output() {
-    Pattern pat; generatePattern(400, pat);
+    Pattern pat; patternFor(400, STYLE_POS_RAND, pat);
     auto spread = [&](float accent) {
         EngineParams p;
         p.density = MAX_STEPS;
@@ -655,7 +657,7 @@ static void test_accent_reaches_output() {
 // every pattern ran a sixteenth late and the bass zone's downbeat landed on
 // the pickup before the bar.
 static void test_first_pulse_plays_step_one() {
-    Pattern pat; generatePattern(400, pat);
+    Pattern pat; patternFor(400, STYLE_POS_RAND, pat);
 
     for (int div = 1; div <= 4; div++) {
         EngineParams p;
@@ -696,8 +698,8 @@ static void test_first_pulse_plays_step_one() {
 // At any LENGTH, raising DENSITY by one must switch on exactly one more step
 // INSIDE the loop. It used to switch on steps the loop never reached.
 static void test_density_respects_length() {
-    for (int seed = 0; seed < NUM_SEEDS; seed += 37) {
-        Pattern pat; generatePattern(seed, pat);
+    for (int roll = 0; roll < NUM_ROLLS; roll += 37) {
+        Pattern pat; anyPatternFor(roll, pat);
         for (int length = 2; length <= MAX_STEPS; length++) {
             int prev = -1;
             for (int d = 1; d <= length; d++) {
@@ -705,10 +707,10 @@ static void test_density_respects_length() {
                 for (int i = 0; i < length; i++)
                     if (stepActive(pat, i, length, d, 0)) n++;
                 CHECK(n == d,
-                      "seed %d length %d density %d: %d steps active",
-                      seed, length, d, n);
-                CHECK(n > prev, "seed %d length %d: density %d added nothing",
-                      seed, length, d);
+                      "roll %d length %d density %d: %d steps active",
+                      roll, length, d, n);
+                CHECK(n > prev, "roll %d length %d: density %d added nothing",
+                      roll, length, d);
                 prev = n;
             }
             // density past the loop length simply means "all of them"
@@ -716,8 +718,8 @@ static void test_density_respects_length() {
                        for (int i = 0; i < length; i++)
                            if (stepActive(pat, i, length, MAX_STEPS, 0)) n++;
                        return n; }() == length,
-                  "seed %d length %d: full density did not fill the loop",
-                  seed, length);
+                  "roll %d length %d: full density did not fill the loop",
+                  roll, length);
         }
     }
     printf("density: every click adds exactly one step at every LENGTH 2..16\n");
@@ -728,7 +730,7 @@ static void test_density_respects_length() {
 // Rotating by a whole loop is a no-op; rotating by one moves every step along
 // by one; and the pattern's content is preserved, only its phase changes.
 static void test_shift_rotates_pattern() {
-    Pattern pat; generatePattern(400, pat);
+    Pattern pat; patternFor(400, STYLE_POS_RAND, pat);
 
     for (int shift = -8; shift <= 8; shift++) {
         CHECK(rotatedIndex(0, shift) == ((shift % 16) + 16) % 16,
@@ -761,8 +763,8 @@ static void test_shift_rotates_pattern() {
 
 // Swing must delay only the off-beat sixteenths, and never the downbeat.
 static void test_swing_delays_offbeats() {
-    Pattern pat; generatePattern(400, pat);
-    pat.swing = 1.f;                      // maximum seed swing, isolate the knob
+    Pattern pat; patternFor(400, STYLE_POS_RAND, pat);
+    pat.swing = 1.f;                      // maximum roll swing, isolate the knob
 
     auto firstGapAfterStep = [&](float swingKnob, int wantStep) {
         EngineParams p;
@@ -837,10 +839,10 @@ static void test_slide_curve_preserves_arrival() {
            "all arrive exactly\n", logC, lin, expC);
 }
 
-// ── seed changes land on the grid ───────────────────────────────────────────
+// ── roll changes land on the grid ───────────────────────────────────────────
 
 static void test_loop_wrap_signal() {
-    Pattern pat; generatePattern(400, pat);
+    Pattern pat; patternFor(400, STYLE_POS_RAND, pat);
     EngineParams p;
     p.density = MAX_STEPS;
     Engine e;
@@ -862,7 +864,7 @@ static void test_loop_wrap_signal() {
 
 static void test_reseed_edge() {
     Pattern pat;
-    generatePattern(0, pat);
+    patternFor(0, STYLE_POS_BASS, pat);
     EngineParams p;
     Engine e;
 
@@ -871,37 +873,37 @@ static void test_reseed_edge() {
 
     in.reseed = 0.f;
     e.process(DT, in, pat, p);
-    CHECK(!e.reseedRequested, "reseed fired with no trigger");
+    CHECK(!e.generateRequested, "reseed fired with no trigger");
 
     in.reseed = 10.f;
     e.process(DT, in, pat, p);
-    CHECK(e.reseedRequested, "rising edge did not request a reseed");
+    CHECK(e.generateRequested, "rising edge did not request a reseed");
 
-    e.reseedRequested = false;
+    e.generateRequested = false;
     for (int i = 0; i < 100; i++) e.process(DT, in, pat, p);   // held high
-    CHECK(!e.reseedRequested, "held-high reseed retriggered — must be edge-only");
+    CHECK(!e.generateRequested, "held-high reseed retriggered — must be edge-only");
 
     in.reseed = 0.f;
     e.process(DT, in, pat, p);
     in.reseed = 10.f;
     e.process(DT, in, pat, p);
-    CHECK(e.reseedRequested, "second rising edge did not request a reseed");
+    CHECK(e.generateRequested, "second rising edge did not request a reseed");
 
     // unpatched must never request
-    e.reseedRequested = false;
+    e.generateRequested = false;
     Engine e2;
     EngineInputs un;
     un.reseed = 10.f;
     un.reseedConnected = false;
     for (int i = 0; i < 100; i++) e2.process(DT, un, pat, p);
-    CHECK(!e2.reseedRequested, "unpatched RESEED requested a reseed");
+    CHECK(!e2.generateRequested, "unpatched RESEED requested a reseed");
     printf("reseed: edge-triggered only, ignored when unpatched\n");
 }
 
 // The engine itself must never invent randomness: same inputs, same outputs.
 static void test_engine_determinism() {
     Pattern pat;
-    generatePattern(21, pat);
+    patternFor(21, STYLE_POS_BASS, pat);
     EngineParams p;
     p.slideKnob = 0.6f;
 

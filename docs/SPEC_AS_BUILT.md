@@ -1,10 +1,10 @@
 # NZZL — Specification As Built
 
 **Status:** feature-complete, awaiting a full manual pass in VCV Rack.
-**Last updated:** 2026-09-21
+**Last updated:** 2026-11-16 (item 16, rules replace seeds, built)
 **Source spec:** [HANDOFF_SPEC.md](HANDOFF_SPEC.md) — the original requirements, unedited.
 **Design reasoning:** [DESIGN.md](DESIGN.md) — why each decision was made.
-**Acceptance procedure:** [SYSTEM_TEST_GUIDE.md](SYSTEM_TEST_GUIDE.md) — 144 manual tests.
+**Acceptance procedure:** [SYSTEM_TEST_GUIDE.md](SYSTEM_TEST_GUIDE.md) — 176 manual tests.
 
 This document describes the module **as it actually exists**, in the same
 order as the original handoff requirements so the two can be read side by
@@ -21,10 +21,12 @@ requirements](#differences-from-the-original-requirements) at the end.
 
 ## Context
 
-NZZL is a deterministic generative bassline/sequencer for the **4ms
-MetaModule**. All output is derived from a seed; there is no runtime
-randomness during playback. The only non-deterministic moment in the module
-is the instant a RESEED trigger fires.
+NZZL is a generative bassline/sequencer for the **4ms MetaModule**. △ **There
+are no seeds** (item 16): every Generate — the RESEED jack or the RANDOM
+button — rolls a fresh pattern, shaped by rules and precomputed for every
+STYLE position, and the roll is saved with the patch. There is no runtime
+randomness during playback; the only non-deterministic moment in the module
+is the instant of a Generate.
 
 △ **It is built against the MetaModule SDK's VCV Rack adaptor, not as a
 native CoreProcessor plugin.** The same `src/nzzl.cc` compiles for VCV Rack 2
@@ -52,9 +54,9 @@ native CoreProcessor plugin.** The same `src/nzzl.cc` compiles for VCV Rack 2
 |---|---|
 | CLOCK | Advances the sequencer one step per rising edge (after CLOCK DIV). Schmitt trigger at 0.1 V / 2.0 V. |
 | RUN | △ **Trigger, not a gate.** A rising edge toggles running/stopped. Position is held, never reset. Unpatched = always running. |
-| RESEED | Rising edge picks a new random seed and drives GROUP/SUBGROUP to match. Edge-triggered only; holding it high fires once. |
-| CV SCALE | **Override.** 0–10 V spans all 13 scale positions. Knob ignored while patched. |
-| CV SEED | **Offset.** Added to the knob seed; 10 V spans all 1024 seeds; wraps at both ends. |
+| RESEED | △ **Generate.** Rising edge rolls a fresh pattern (every STYLE row), which starts when the loop next wraps. Edge-triggered only; holding it high fires once. |
+| CV SCALE | **Override.** 0–10 V spans all scale positions. Knob ignored while patched. |
+| CV DENSITY | △ **Was CV SEED** (item 16). **Offset** added to the DENSITY knob; 10 V spans the full 1–16 range; **clamped** at both ends. |
 | CV ROOT | **Override.** V/oct — 1 V = 12 semitones — snapped to whole semitones and wrapped to 0–11. Knob ignored while patched. |
 | CV SLIDE | Summed with the step's own slide flag, then scaled by the SLIDE knob: `knob × clamp01(flag + cv)`. 10 V = full. |
 
@@ -72,45 +74,45 @@ Every input is a no-op when unpatched.
 
 ## Knobs
 
-Fifteen knobs and one button. △ Six controls are new (SHAPE, PITCH
-OFFSET, SHIFT, SWING, GATE, ACCENT, plus the RANDOM button) and one from
-the original requirements is gone (SCALE LOCK).
+Fourteen knobs and one button. △ Seven controls are new (STYLE, SHAPE,
+PITCH OFFSET, SHIFT, SWING, GATE, ACCENT, plus the RANDOM button) and three
+from the original requirements are gone (SCALE LOCK; GROUP and SUBGROUP,
+item 16). SUBGROUP's panel position is held for PITCH LENGTH (item 7).
 
 | Knob | Range | Default | Behaviour |
 |---|---|---|---|
-| GROUP | 1–32 | 1 | Seed group. Zones: **1–10 Bassline, 11–21 Random, 22–32 Arp**. |
-| SUBGROUP | 1–32 | 1 | Seed within group. In the Arp zone: **1–8 up, 9–16 down, 17–24 up-down, 25–32 down-up**. |
-| DENSITY | 1–16 | 8 | Step threshold: a step plays when `weight <= density`. Exactly N of 16 steps play at density N. |
+| STYLE | 6 detents | BASS | △ **New (item 16), replaces GROUP / SUBGROUP.** **BASS, RAND, ARP↑, ARP↓, ARP↕, ARP↔.** Each position is a row of the current roll: switching is instant, returning gives the same pattern until the next Generate. A change lands on the loop wrap. No CV. |
+| DENSITY | 1–16 | 8 | Step threshold: a step plays when `weight <= density`. Exactly N of 16 steps play at density N, nested. CV DENSITY adds to it. |
 | LENGTH | 2–16 | 16 | Loop length. |
 | CLOCK DIV | 1–16 | 1 | Divides the incoming clock. |
 | OCTAVE RANGE | 1–5 | 2 | How many octaves the sequence spans. |
 | ROOT | C–B | C | Key centre. |
 | SCALE | 0–12 | Natural Minor | △ **13 positions. Position 0 is unquantized**; 1–12 are the twelve scales. |
-| SLIDE | 0.0–1.0 | 0 | Attenuator over the seed-derived slide. CCW = no slide regardless of seed or CV. |
+| SLIDE | 0.0–1.0 | 0 | Attenuator over the rolled slide flags. CCW = no slide regardless of pattern or CV. |
 | SHAPE | 0.0–1.0 | 0.5 | △ **New.** Glide curve: 0 logarithmic, 0.5 linear, 1 exponential. |
 | GATE | 1–200 % | 100 % | △ **New.** Scales the pattern's three note lengths together. |
 | ACCENT | 0–100 % | 100 % | △ **New.** Scales the contrast between the three velocity layers. |
 | PITCH OFFSET | −7…+7 | 0 | △ **New.** Moves the pattern by whole scale degrees, **pre-quantization**, so it stays in key. Overflow carries into the octave. |
 | SHIFT | −8…+8 | 0 | △ **New.** Rotates the whole sixteen-step pattern before the LENGTH window. |
-| SWING | 0–100 % | 0 | △ **New.** Scales the seed's own swing. Delays off-beat sixteenths only, capped at ⅓ of a step. |
-| RANDOM | button | — | △ **New.** Picks a random seed and drives GROUP/SUBGROUP to match — the same thing the RESEED jack does. |
+| SWING | 0–100 % | 0 | △ **New.** Scales the roll's own swing. Delays off-beat sixteenths only, capped at ⅓ of a step. |
+| RANDOM | button | — | △ **New.** Generate — the same thing the RESEED jack does. |
 
 ---
 
-## Seed system
+## Roll system △ (was: Seed system)
 
-**1024 seeds** = 32 groups × 32 subgroups.
+△ **Rules replace seeds** (item 16, decided 2026-11-13, built 2026-11-16).
+The original requirements' 1024 seeds on GROUP × SUBGROUP are gone.
 
-```
-seed_index = (group - 1) * 32 + (subgroup - 1)     // 0–1023
-```
+**Generate** — the RESEED jack, the RANDOM button, or placing a fresh module
+— draws fresh randomness once: one 32-bit value per **lane** (weight, pitch,
+gate lengths, gate index, accent, slide, octave, swing, BASS shaping, ARP
+accents). From it, a **roll** fills one pattern per STYLE position (six rows).
+Everything after the draw is deterministic and harness-tested; nothing random
+happens during playback. Lanes draw independently, so they are statistically
+unrelated within a roll.
 
-The mapping is a proven bijection in both directions, so any pattern the
-module can produce is reachable by hand from the knobs.
-
-Per-step values generated deterministically at pattern initialisation, each
-from its **own salted xorshift32 stream** so a change to one attribute never
-reshuffles the others:
+Per-step values in each row:
 
 | Value | Range |
 |---|---|
@@ -121,22 +123,24 @@ reshuffles the others:
 | `slide` | boolean, weighted by style |
 | `octaveJump` | △ explicit octave offset, or −1 meaning "spread across the range" |
 | `octaveRaw` | 0.0–1.0 |
+| `acidRole` | △ BASS only: an interval (0/3/5/7/10 semitones), else −1 |
 
-Plus, per pattern: △ **three gate lengths** — short 0.12–0.30, mid 0.35–0.60,
-long 0.65–0.95 of a clock period.
+Plus, per row: △ **three gate lengths** — short 0.12–0.30, mid 0.35–0.60,
+long 0.65–0.95 of a clock period — and a swing amount.
 
-**RESEED** — the jack or the △ **RANDOM button** — picks a new seed from a
-non-deterministic source and **writes the GROUP and SUBGROUP knobs** so what
-you hear stays reproducible by hand. The display flashes amber for 350 ms.
+The RAND row is the roll's **base pattern**; BASS and the ARPs are shaped
+from it, so within one roll RAND and the ARPs share notes and rhythm.
 
-△ **Seed changes land on the grid.** However the seed changes — knob, button,
-jack or CV — the new pattern is held until the loop wraps, so it always
-starts from its own step 1 rather than dropping in mid-phrase.
+△ **Changes land on the grid.** A Generate or a STYLE change is held until
+the loop wraps, so a new pattern starts from the top rather than dropping in
+mid-phrase. The display flashes amber for 350 ms on a Generate.
 
-**Patch save:** the seed rides on the GROUP/SUBGROUP params, which the host
-saves — including after a reseed, because reseed writes the knobs rather than
-shadowing them. `dataToJson` additionally stores the run state. △ The step
-position is deliberately *not* saved.
+**Patch save:** △ `dataToJson` stores the **whole roll** — every row, not
+just the one STYLE points at — so a reloaded patch plays what you heard and
+STYLE still behaves the same. A Generate still waiting for the wrap is saved
+as the roll. Plus the run state. The step position is deliberately *not*
+saved. A damaged save, or a patch from before item 16, loads with a fresh
+roll instead (breaking test-era patches was accepted).
 
 ---
 
@@ -146,10 +150,11 @@ position is deliberately *not* saved.
 step_is_active = (step.weight <= density_knob_value)
 ```
 
-Weights are a **permutation of 1–16**, not random draws, so density N
-activates exactly N of 16 steps on every seed, the response is linear, and
-density 1 always plays something. Same seed + same density = identical
-output, always. No probability at playback.
+Weights are a **permutation of 1–16** (one shuffled order per row), not
+random draws, so density N activates exactly N of 16 steps in every roll,
+the response is linear, turning it up only ever adds steps, and density 1
+always plays something. Same roll + same density = identical output, always.
+No probability at playback.
 
 △ **Density ranks the weights inside the loop window**, not across all
 sixteen steps. Comparing weight to density directly meant that at LENGTH 8
@@ -161,19 +166,20 @@ every length, and is identical to the old behaviour at LENGTH 16.
 
 ## Style behaviour
 
-Style comes from the GROUP zone, not a separate knob.
+△ Style comes from the **STYLE** knob (item 16), not the GROUP zone. Each
+position is one precomputed row of the roll.
 
-### Bassline — groups 1–10 △ **303-style acid**
+### BASS △ **303-style acid**
 
 Not "notes on beats 1 and 3". A TB-303 line is runs of sixteenths broken by
 rests, with slides welding notes together, the root hammered far more than
 anything else, and the odd octave jump.
 
-**Rhythm.** Each seed builds its own priority order of step positions, and
+**Rhythm.** Each roll builds its own priority order of step positions, and
 weights 1–16 are laid along it:
 
-1. the downbeat leads — 85 % of seeds
-2. four runs of 2–4 consecutive sixteenths at seed-chosen start points
+1. the downbeat leads — 85 % of rolls
+2. four runs of 2–4 consecutive sixteenths at rolled start points
 3. whatever is left, in order
 
 Laying 1–16 along a permutation of positions is still a permutation, so
@@ -204,8 +210,8 @@ reasoning rather than by listening — expect to move them.
 
 | Constant | Value | What it does | Turn it up | Turn it down |
 |---|---|---|---|---|
-| `BASS_DOWNBEAT_CHANCE` | 0.85 | How often step 1 is the *first* note to appear as DENSITY rises | Every seed anchors on the one; safer, more samey | More seeds start off-beat; less grounded, more variety |
-| `BASS_RUNS` | 4 | How many separate bursts of consecutive sixteenths each seed gets | Busier, more continuous sixteenth motion | Sparser, more rests, more space |
+| `BASS_DOWNBEAT_CHANCE` | 0.85 | How often step 1 is the *first* note to appear as DENSITY rises | Every roll anchors on the one; safer, more samey | More rolls start off-beat; less grounded, more variety |
+| `BASS_RUNS` | 4 | How many separate bursts of consecutive sixteenths each roll gets | Busier, more continuous sixteenth motion | Sparser, more rests, more space |
 | `BASS_RUN_MIN` / `BASS_RUN_SPAN` | 2 / 3 → runs of 2–4 | How long each burst is | Longer unbroken sixteenth runs | Choppier, more stabs than runs |
 | `BASS_SLIDE_CHANCE` | 0.32 | Share of steps that tie into the next note | More legato, more classic acid glide | More articulated and separate |
 | `BASS_ACCENT_CHANCE` | 0.28 | Share of notes on the high velocity layer | More aggressive, more filter movement downstream | Flatter, more even |
@@ -213,9 +219,10 @@ reasoning rather than by listening — expect to move them.
 | Pitch weights | 55 / 15 / 12 / 10 / 8 % | Root / fifth / third / seventh / fourth | — | — |
 | Gate mix | 65 % short, 35 % mid | Which of the three note lengths a bass step uses | — | — |
 
-Measured over all 320 bass seeds (5120 notes), the realized rates match:
-85.3 % downbeat, 32.6 % ties, 27.3 % accent, 17.7 % octave-up, 64.1 % short
-gates, and 54.8 / 15.0 / 11.3 / 10.5 / 8.5 % on the five pitch degrees.
+Measured over the BASS rows of 1024 harness rolls, the realized rates match:
+86 % downbeat, 32 % ties, 18 % octave-up, 55 % root (the harness prints these
+on every run). The earlier per-degree breakdown was measured over the 320
+bass seeds before item 16; the shaping code is unchanged.
 
 **Velocity layers** come out 27 % high / 53 % low / 20 % off, so roughly one
 note in five is a quiet ghost note — which is where a lot of the groove lives.
@@ -225,13 +232,13 @@ note in five is a quiet ghost note — which is where a lot of the groove lives.
 Worth understanding before touching the constants, because the ordering is
 what makes DENSITY musical rather than arbitrary:
 
-1. A **priority order** of the sixteen step positions is built per seed:
+1. A **priority order** of the sixteen step positions is built per roll:
    the downbeat first (85 %), then the four runs in the order they were
    generated, then every position not yet claimed.
 2. Weights 1–16 are laid along that order.
 3. DENSITY N therefore plays **the first N entries of the priority order**.
 
-So turning DENSITY up walks down the seed's own priority list: the downbeat,
+So turning DENSITY up walks down the roll's own priority list: the downbeat,
 then the heads and bodies of its runs, then the leftovers.
 
 > **Known limitation.** The runs claim **8.7 of 16 positions on average**, so
@@ -241,19 +248,20 @@ then the heads and bodies of its runs, then the leftovers.
 > counts flatten out above density 6. If the high end ever sounds mechanical,
 > this is the cause.
 
-### Random — groups 11–21
+### RAND
 
-The unshaped generator, untouched. Even distribution across the scale,
-moderate octave spread, all three gate lengths, varied everything.
+The unshaped base pattern of the roll, untouched. Even distribution across
+the scale, moderate octave spread, all three gate lengths, varied everything.
+A test asserts the RAND row is exactly the base pattern in every roll.
 
-This zone is **bit-identical to what the generator produced before styles
-existed**, and a test asserts it for all 352 of its seeds.
+### ARP↑ / ARP↓ / ARP↕ / ARP↔
 
-### Arp — groups 22–32
-
-The sixteen pitches are sorted, then read out in the direction the SUBGROUP
-knob selects: △ **up, down, up-down, down-up**. Even subdivisions, one gate
-length throughout, no glide.
+The base pattern's sixteen pitches are sorted, then read out in the STYLE
+position's direction: △ **up, down, up-down, down-up**. The rhythm and the
+set of pitches are the RAND row's, so switching between RAND and an ARP in
+one roll reorders the same notes. Even subdivisions, one gate length
+throughout; the base's slide flags are kept, and each ARP row rolls its own
+accents.
 
 ---
 
@@ -276,12 +284,12 @@ are fully apart — 7.8 V of measured spread at the output.
 ## Rhythm behaviour
 
 △ Active steps land on even clock subdivisions **unless SWING is up**. The
-seed carries its own swing amount, so groove is part of a pattern's identity
+roll carries its own swing amount, so groove is part of a pattern's identity
 rather than a separate global setting; the knob scales it. Only off-beat
 sixteenths are delayed, never the downbeat, and never by more than a third of
 a step. At SWING 0 the behaviour is exactly what the requirements describe.
 
-The seed determines *which* steps are active, and now also how hard they
+The roll determines *which* steps are active, and also how hard they
 swing — but not their timing within a step. Clock period is estimated from the time between accepted rising
 edges, clamped to 10 ms – 4 s.
 
@@ -289,7 +297,7 @@ edges, clamped to 10 ms – 4 s.
 
 ## Slide / portamento
 
-Each step carries a seed-derived slide flag. When a step slides:
+Each step carries a rolled slide flag. When a step slides:
 
 - pitch **glides linearly** from the previous note to this one
 - △ **the gate is held through into the next note** — a slide is a *tie*
@@ -309,7 +317,7 @@ Glide duration = `SLIDE knob × 0.9 × step duration`, so it is tempo-relative
 and always finishes before the next note starts.
 
 The SLIDE knob is an attenuator over `flag + CV`, so CCW kills all glide
-however much CV is arriving, and a patched CV can put glide on steps the seed
+however much CV is arriving, and a patched CV can put glide on steps the roll
 never flagged.
 
 ---
@@ -378,15 +386,17 @@ Three lines:
 
 | Line | Content | Example |
 |---|---|---|
-| 1 | Group and subgroup | `4 . 7` |
-| 2 | Style zone | `BASS`, `RAND`, `ARP↑`, `ARP↓`, `ARP↕`, `ARP↔` |
+| 1 | △ Effective density / length (item 16) | `8/16` |
+| 2 | STYLE position | `BASS`, `RAND`, `ARP↑`, `ARP↓`, `ARP↕`, `ARP↔` |
 | 3 | Root and scale | `C MINOR`, or `C RAW` when unquantized |
 
-Lines 1 and 3 follow the **effective** value, CV included. A reseed flashes
-the display amber for 350 ms.
+Lines 1 and 3 follow the **effective** value, CV included. Line 1's density
+is clamped to LENGTH, as the engine plays it, so at LENGTH 8 a DENSITY of 12
+reads `8/8`. When PITCH LENGTH (item 7) is set it will read `8/16 P5`. A
+Generate flashes the display amber for 350 ms.
 
-The text is built with no heap, no `<string>` and no stdio, and all 1024
-seeds are verified. Only the rendering is hardware's problem, and it is
+The text is built with no heap, no `<string>` and no stdio, and every
+combination is verified. Only the rendering is hardware's problem, and it is
 **unverified** — no physical MetaModule has run this yet.
 
 ---
@@ -396,7 +406,8 @@ seeds are verified. Only the rendering is hardware's problem, and it is
 ```
 src/
 ├── rng.hh       Xorshift32 PRNG. Pure.
-├── pattern.hh   Seed → Pattern, style zones, seed↔knob mapping. Pure.
+├── pattern.hh   Roll entropy → one Pattern per STYLE position. Pure.
+├── roll.hh      Roll player (changes on the wrap) + the save format. Pure.
 ├── scales.hh    Scale tables, degree/octave mapping, quantization. Pure.
 ├── engine.hh    Realtime state machine: triggers, clock, gate, slide. Pure.
 ├── cv.hh        CV input mapping. Pure.
@@ -406,14 +417,15 @@ src/
 ```
 
 △ The file layout differs from the one the requirements sketched (`nzzl.hh`
-was never needed; five more pure headers exist instead).
+was never needed; six more pure headers exist instead).
 
 **The rule that shapes everything:** anything deterministic lives in a pure
 header with no `rack.hpp` include, so the native harness can compile and test
 it without Rack or the ARM toolchain. `nzzl.cc` holds no decisions.
 
-Six test suites under `tests/`, run by `./tests/run_tests.sh` and by CI on
-every branch.
+Seven test suites under `tests/`, run by `./tests/run_tests.sh` and by CI on
+every branch. △ Since item 16 they check properties over 1024 reproducible
+rolls (`tests/rolls.hh`) instead of every one of 1024 seeds.
 
 ---
 
@@ -450,13 +462,14 @@ listed here follows the original requirements.**
 | A2 | SCALE LOCK as a separate on/off toggle beside a 12-scale knob | **Position 0 of the SCALE knob** is unquantized; 13 positions total | One control answers "how are these notes pitched?" instead of two that can disagree. Frees a panel position, and lets CV SCALE reach raw mode without a second jack. **Costs** the ability to A/B back to your scale | 2026-09-20 |
 | A3 | Bassline: "notes cluster on beats 1 and 3, sparse off-beat, gate mostly short" | **303-style acid**: runs of sixteenths, ties, root hammering, octave jumps | The requirement describes a dub/house bassline. The module is aimed at acid. User: *"ideally id want the bass algos to simulate 303 style sequences"* | 2026-09-20 |
 | A4 | Gate length: per-step, seed-derived. Velocity: per-step, seed-derived | **Three note lengths + a GATE knob (1–200 %)**; **three velocity layers + an ACCENT knob (0–100 %)** | A small audible set you can scale beats sixteen unrelated numbers you cannot. Also gives the 303 zone its accent behaviour | 2026-09-20 |
+| A5 | 1024 recallable seeds on GROUP / SUBGROUP; CV SEED; display `g . s`; "all output derived from a seed" | **Rules replace seeds**: Generate rolls a fresh pattern for every STYLE position, saved with the patch; **STYLE** knob (6 detents) replaces GROUP / SUBGROUP; CV SEED → **CV DENSITY** (offset, clamped); display line 1 `8/16` | Gerardo has never wanted to recall a seed; Sting 2's fresh, rule-shaped rolls fit how he plays. Breaking test-era patches accepted | 2026-11-13 / 11-16 |
 
 ### B. Engineering decisions the requirements left open
 
 | # | Requirement said | Built | Why |
 |---|---|---|---|
 | B1 | "Native MetaModule CoreProcessor plugin (not a VCV Rack port)" | Built against the **SDK's VCV Rack adaptor**; one source tree compiles for both targets | Lets the module be developed and heard in VCV Rack on a Mac, with hardware builds from the same source. Without it every iteration would need an SD card and the physical module |
-| B2 | A file layout with `nzzl.hh` | **Five more pure headers** (`pattern`, `scales`, `engine`, `cv`, `display`); no `nzzl.hh` | Everything deterministic lives in a header with no Rack dependency, so it can be machine-tested. This is why clock, gate, slide and quantization all have automated coverage |
+| B2 | A file layout with `nzzl.hh` | **Six more pure headers** (`pattern`, `roll`, `scales`, `engine`, `cv`, `display`); no `nzzl.hh` | Everything deterministic lives in a header with no Rack dependency, so it can be machine-tested. This is why clock, gate, slide and quantization all have automated coverage |
 | B3 | "Slide time is constant (derived from clock tempo feel)" | `SLIDE knob × 0.9 × step duration`, **linear ramp** | Tempo-relative, so the feel survives a tempo change. Linear arrives exactly, cannot overshoot, and is assertable. The 0.9 cap guarantees a glide finishes before the next note |
 | B4 | Slide = "CV output glides from previous pitch to current pitch" | Glide **plus the gate is held into the next note** | On a real 303 the slide button ties the notes. A glide across a gap is two notes with portamento, which is not the sound |
 | B5 | Seed values include "step octave offset (0 to octave_range-1)" | `octaveJump` (explicit) **or** `octaveRaw` (spread across the range), per style | A 303 octave-up must stay +1 whether OCTAVE RANGE is 2 or 5. A proportional value cannot express that |
@@ -470,10 +483,10 @@ against a one-line paraphrase of it.
 
 | # | Requirement | Was | Now |
 |---|---|---|---|
-| C1 | Zones: 1–10 / **11–21** / **22–32** | 1–10 / 11–22 / 23–32 | Correct |
-| C2 | Arp subgroup zones: 1–8 up, 9–16 down, 17–24 up-down, 25–32 down-up | **Did not exist** — direction was chosen at random per 4-step block | Implemented, each with its own display arrow |
+| C1 | Zones: 1–10 / **11–21** / **22–32** | 1–10 / 11–22 / 23–32 | Correct until item 16 replaced zones with the STYLE knob (A5) |
+| C2 | Arp subgroup zones: 1–8 up, 9–16 down, 17–24 up-down, 25–32 down-up | **Did not exist** — direction was chosen at random per 4-step block | Implemented, each with its own display arrow; since item 16, four STYLE positions |
 | C3 | Twelve named scales in a given order | Wrong list — Phrygian Dominant and Blues present, Pentatonic Major and Whole Tone missing | The requirement's twelve, in its order, at positions 1–12 |
-| C4 | CV SCALE and CV ROOT are **overrides**; CV SEED is an **offset**; CV SLIDE is summed **then** attenuated | All four were offsets; SLIDE was `knob + cv` | Each matches its stated semantics |
+| C4 | CV SCALE and CV ROOT are **overrides**; CV SEED is an **offset**; CV SLIDE is summed **then** attenuated | All four were offsets; SLIDE was `knob + cv` | Each matches its stated semantics (CV SEED's offset now drives DENSITY, A5) |
 
 ### D. A bug the requirements did not cause, worth recording
 
@@ -494,6 +507,8 @@ stays *more* constrained than the random zone, so over-correcting fails too.
 |---|---|---|---|---|---|---|
 | Distinct bass rhythms (320 seeds) | 16 | 29 | 46 | **100** | 145 | 189 |
 | Distinct random rhythms (352 seeds) | 16 | 111 | 265 | 317 | 339 | 346 |
+| △ After item 16: bass, 1024 rolls | 16 | 29 | 67 | **201** | 285 | 366 |
+| △ After item 16: RAND, 1024 rolls | 16 | 120 | 467 | 797 | 928 | 967 |
 
 ---
 
@@ -838,7 +853,14 @@ right after one, which spreads them out and sounds more like a played line.
 accent pattern, which the old invariants forbade. With rules replacing seeds
 (item 16) that no longer applies, and it can simply become the rule.
 
-#### 16. Rules replace seeds — **decided 2026-11-13, not built yet**
+#### 16. Rules replace seeds — **decided 2026-11-13, ✅ built 2026-11-16** (awaiting user test)
+
+**As built.** `pattern.hh` rolls a `RollEntropy` (one fresh draw per lane)
+into a `Roll` of six rows; `roll.hh` holds it, lands Generates and STYLE
+changes on the wrap, and saves it as a validated hex string next to the run
+state. STYLE sits in GROUP's param slot; SUBGROUP's slot is held for PITCH
+LENGTH. Not built here: PITCH LENGTH itself (item 7) and anti-clumping
+(item 15), which come next.
 
 **The decision.** Gerardo prefers Sting's approach: every Generate is a fresh
 roll, shaped by rules, with no seed to dial or return to. He has never
@@ -900,6 +922,9 @@ fresh pattern; knobs pick from rows precomputed at each roll. Also settled
 the same day: the rolled pattern is saved with the patch, and a STYLE
 control (no CV) replaces GROUP / SUBGROUP.
 
+**Built 2026-11-16: item 16.** Awaiting the manual pass in VCV Rack
+(SYSTEM_TEST_GUIDE § 16).
+
 **Settled 2026-11-16: the rest of item 16, and the order.** Build item 16
 first, then item 7 and item 15 on top of it. STYLE is a panel knob; PITCH
 LENGTH takes the other freed position; CV SEED becomes CV DENSITY (offset);
@@ -918,5 +943,5 @@ Two things still want a human opinion rather than a test:
 2. **Are the GATE and ACCENT ranges right?** 1–200 % and 0–100 %. Test G.10.
 
 And one thing genuinely blocked: **the display's rendering on hardware is
-unverified.** The text content is tested for all 1024 seeds; whether
+unverified.** The text content is tested for every combination; whether
 `MetaModule::VCVTextDisplay` paints it needs the physical module.

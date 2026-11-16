@@ -20,14 +20,14 @@ something, and the acceptance criteria for tasks not yet built.
 
 **Before making any changes, read [docs/DESIGN.md](docs/DESIGN.md)** — it records
 the architecture rules, determinism invariants, and design decisions already made.
-Violating them (especially the RNG stream isolation) silently breaks users' saved
-patches.
+Violating them (especially "no randomness at playback" and the save format)
+silently breaks users' saved patches.
 
 ## Build & test loop
 
 ```bash
 # 1. Native tests — run after ANY change to src/*.hh (pure logic).
-# Six suites; CI runs them too, so a red harness never reaches main.
+# Seven suites; CI runs them too, so a red harness never reaches main.
 ./tests/run_tests.sh
 
 # 2. VCV Rack build + install (user tests by ear/scope in Rack)
@@ -41,17 +41,23 @@ git push   # artifact downloadable via: gh run download
 
 ## Hard rules
 
-- **All playback logic must be deterministic from the seed.** No `rand()`,
-  no `random::` calls in `process()`. The only non-deterministic moment is
-  the RESEED trigger.
+- **No randomness at playback.** Generate (RESEED jack, RANDOM button, a
+  freshly placed module) is the only moment that draws randomness — a
+  `RollEntropy` from `random::u32()` in `nzzl.cc`. Everything after that is
+  pure (`rollPatterns()`), and `process()` only reads the precomputed roll.
+  No `rand()`, no `random::` calls anywhere else.
 - **Pure logic goes in headers under `src/` with no `rack.hpp` include**
-  (`rng.hh`, `pattern.hh`, `scales.hh`, `engine.hh`, `cv.hh`, `display.hh`)
-  so the native test harness can compile it. `nzzl.cc` is a thin Rack adapter
-  only — if you are about to put a decision in it, put it in a header instead
-  and write the test.
-- **Never change how an existing attribute consumes its RNG stream** — each
-  attribute has its own salted stream precisely so patches survive upgrades.
-  New attributes get new salts.
+  (`rng.hh`, `pattern.hh`, `roll.hh`, `scales.hh`, `engine.hh`, `cv.hh`,
+  `display.hh`) so the native test harness can compile it. `nzzl.cc` is a
+  thin Rack adapter only — if you are about to put a decision in it, put it
+  in a header instead and write the test.
+- **Rules replace seeds (item 16).** There are no seeds and no salted
+  streams to protect. Every STYLE position is precomputed at the roll, so a
+  knob never re-rolls; DENSITY stays exact and nested (one shuffled order per
+  row); lanes draw independently within a roll; the whole roll is saved with
+  the patch. A new lane gets its own `Lane` entry and its own fresh draw.
+  Changing the save layout means bumping `ROLL_FORMAT` in `roll.hh`. See
+  [docs/DESIGN.md](docs/DESIGN.md) § Roll invariants.
 - MetaModule SDK limits: no iostream/fstream/stringstream, no exceptions,
   C++20, ARM GCC 12.2/12.3 exactly (CI handles this).
 - Commit and push at each working checkpoint. If push returns 403 for

@@ -2,7 +2,8 @@
 #include "rng.hh"
 #include <cstdint>
 
-// Pure pattern generation — no Rack dependencies, fully deterministic.
+// Pure pattern generation — no Rack dependencies. Deterministic given the
+// roll's entropy; the entropy itself is drawn only at Generate.
 // Everything here is testable outside VCV Rack / MetaModule.
 
 namespace nzzl {
@@ -54,7 +55,7 @@ inline bool stepActive(const Pattern& pat, int step, int length, int density,
 struct Pattern {
     StepData steps[MAX_STEPS];
     float    gateLengths[NUM_GATE_LENGTHS];   // fractions of a clock period
-    float    swing;      // 0..1, seed-derived; scaled by the SWING knob
+    float    swing;      // 0..1, rolled; scaled by the SWING knob
 };
 
 inline bool stepActive(const Pattern& pat, int step, int length, int density,
@@ -86,47 +87,55 @@ inline float velocityFor(int layer, float accent01) {
     return VEL_FLAT + (VEL_LAYER[l] - VEL_FLAT) * a;
 }
 
-// splitmix32 — decorrelates sequential seed indices before they enter
-// xorshift, so adjacent seeds produce unrelated patterns.
-inline uint32_t hashSeed(uint32_t x) {
-    x += 0x9E3779B9u;
-    x ^= x >> 16;
-    x *= 0x21F0AAADu;
-    x ^= x >> 15;
-    x *= 0x735A2D97u;
-    x ^= x >> 15;
-    return x ? x : 1;
-}
+// ── Rolls ───────────────────────────────────────────────────────────────────
+//
+// Item 16, "rules replace seeds" (decided 2026-11-13, built 2026-11-16).
+// There is no seed to dial or return to. Generate (the RESEED jack or the
+// RANDOM button) ROLLS: it draws fresh randomness once, and from it fills one
+// precomputed pattern per STYLE position. Turning STYLE is then instant, and
+// returning to a position gives the same pattern until the next Generate.
+// process() still only reads precomputed steps — nothing random at playback.
+//
+// Lanes draw independently within a roll: every attribute has its own
+// generator, started from its own fresh 32-bit draw. That is no longer about
+// protecting saved seeds (the whole roll is saved with the patch instead); it
+// keeps the lanes statistically unrelated, and it means a change to how one
+// lane draws never shifts the values another lane gets.
 
-// Each attribute gets its own RNG stream so future changes to one
-// attribute's generation never reshuffle the others (patch stability
-// across plugin versions).
-enum AttrSalt : uint32_t {
-    SALT_WEIGHT   = 0x57454948,
-    SALT_PITCH    = 0x50495443,
-    SALT_GATE     = 0x47415445,
-    SALT_VELOCITY = 0x56454C4F,
-    SALT_SLIDE    = 0x534C4944,
-    SALT_OCTAVE   = 0x4F435456,
-    SALT_STYLE    = 0x5354594C,   // Task 8 — new attribute, new salt
-    SALT_GATELEN  = 0x474C454E,   // the pattern's three note lengths
-    SALT_ACCENT   = 0x41434354,   // per-step velocity layer
-    SALT_OCTJUMP  = 0x4F4A4D50,   // per-step octave jump
-    SALT_SWING    = 0x53574E47,   // per-pattern swing amount
+enum Lane {
+    LANE_WEIGHT = 0,   // the one shuffled order DENSITY reads, per roll
+    LANE_PITCH,
+    LANE_GATELEN,      // the roll's three note lengths
+    LANE_GATE,         // which length each step uses
+    LANE_ACCENT,       // per-step velocity layer
+    LANE_SLIDE,
+    LANE_OCTAVE,
+    LANE_SWING,
+    LANE_BASS,         // the BASS row's shaping
+    LANE_ARP,          // the four ARP rows' accents
+    NUM_LANES
 };
 
-inline Xorshift32 attrRng(int seedIndex, uint32_t salt) {
-    return Xorshift32(hashSeed(uint32_t(seedIndex) ^ salt));
+// The randomness a roll is made from. The adapter fills it from a
+// non-deterministic source at Generate; the harness fills it from a test
+// generator so that "many rolls" are reproducible in CI.
+struct RollEntropy {
+    uint32_t lane[NUM_LANES];
+};
+
+inline Xorshift32 laneRng(const RollEntropy& e, Lane l) {
+    return Xorshift32(e.lane[l]);
 }
 
-// The base pattern, before any style shaping. Exposed so tests can prove
-// the STYLE_RANDOM zone is bit-identical to it.
-inline void generateBasePattern(int seedIndex, Pattern& pat) {
+// The base pattern, before any style shaping. It is the RAND row as is, and
+// what the BASS and ARP rows are shaped from — so within one roll, switching
+// STYLE between RAND and an ARP keeps the same notes, just reordered.
+inline void generateBasePattern(const RollEntropy& e, Pattern& pat) {
     StepData* steps = pat.steps;
 
     // Weights: Fisher-Yates shuffle of 1..16 so density is exactly linear
     {
-        auto rng = attrRng(seedIndex, SALT_WEIGHT);
+        auto rng = laneRng(e, LANE_WEIGHT);
         int order[MAX_STEPS];
         for (int i = 0; i < MAX_STEPS; i++)
             order[i] = i + 1;
@@ -141,129 +150,103 @@ inline void generateBasePattern(int seedIndex, Pattern& pat) {
     }
 
     {
-        auto rng = attrRng(seedIndex, SALT_PITCH);
+        auto rng = laneRng(e, LANE_PITCH);
         for (int i = 0; i < MAX_STEPS; i++)
             steps[i].pitchIndex = rng.nextInt(16);
     }
     // The pattern's three note lengths, short to long, and which one each
     // step uses.
     {
-        auto rng = attrRng(seedIndex, SALT_GATELEN);
+        auto rng = laneRng(e, LANE_GATELEN);
         pat.gateLengths[0] = 0.12f + rng.nextFloat() * 0.18f;   // 0.12–0.30
         pat.gateLengths[1] = 0.35f + rng.nextFloat() * 0.25f;   // 0.35–0.60
         pat.gateLengths[2] = 0.65f + rng.nextFloat() * 0.30f;   // 0.65–0.95
     }
     {
-        auto rng = attrRng(seedIndex, SALT_GATE);
+        auto rng = laneRng(e, LANE_GATE);
         for (int i = 0; i < MAX_STEPS; i++)
             steps[i].gateIndex = rng.nextInt(NUM_GATE_LENGTHS);
     }
     {
-        auto rng = attrRng(seedIndex, SALT_ACCENT);
+        auto rng = laneRng(e, LANE_ACCENT);
         for (int i = 0; i < MAX_STEPS; i++)
             steps[i].velLayer = rng.nextInt(NUM_VEL_LAYERS);
     }
     {
-        auto rng = attrRng(seedIndex, SALT_SLIDE);
+        auto rng = laneRng(e, LANE_SLIDE);
         for (int i = 0; i < MAX_STEPS; i++)
             steps[i].slide = rng.nextFloat() < 0.25f;
     }
     {
-        auto rng = attrRng(seedIndex, SALT_OCTAVE);
+        auto rng = laneRng(e, LANE_OCTAVE);
         for (int i = 0; i < MAX_STEPS; i++)
             steps[i].octaveRaw = rng.nextFloat();
     }
-    {
-        auto rng = attrRng(seedIndex, SALT_OCTJUMP);
-        for (int i = 0; i < MAX_STEPS; i++) {
-            (void)rng.nextFloat();          // reserved; styles overwrite this
-            steps[i].octaveJump = -1;       // default: spread across the range
-        }
+    for (int i = 0; i < MAX_STEPS; i++) {
+        steps[i].octaveJump = -1;           // default: spread across the range
+        steps[i].acidRole   = -1;           // only the bass row sets roles
     }
-    for (int i = 0; i < MAX_STEPS; i++)
-        steps[i].acidRole = -1;             // only the bass zone sets roles
     {
         // Groove is part of a pattern's identity, not just a global setting.
-        auto rng = attrRng(seedIndex, SALT_SWING);
+        auto rng = laneRng(e, LANE_SWING);
         pat.swing = rng.nextFloat();
     }
 }
 
-// ── Style zones ─────────────────────────────────────────────────────────────
+// ── STYLE ───────────────────────────────────────────────────────────────────
 //
-// The GROUP knob divides the 1024 seeds into three zones, per the handoff
-// spec: 1–10 BASS, 11–21 RAND, 22–32 ARP. Inside the ARP zone the SUBGROUP
-// knob picks the direction: 1–8 up, 9–16 down, 17–24 up-down, 25–32 down-up.
-//
-// The style layer runs AFTER the base pattern, from its own salted stream,
-// and STYLE_RANDOM is a deliberate no-op — new needs get new salts, existing
-// draws never change, and the middle zone stays exactly what the unshaped
-// generator produced.
+// A six-position panel knob (decided 2026-11-16), replacing GROUP/SUBGROUP:
+// BASS, RAND, then the four arp directions. Each position is one row of the
+// roll. No CV — style is not something to modulate.
 
 enum Style {
-    STYLE_BASS   = 0,   // GROUP 1–10:  303-style acid lines
-    STYLE_RANDOM = 1,   // GROUP 11–21: the untouched base pattern
-    STYLE_ARP    = 2,   // GROUP 22–32: ordered runs, direction from SUBGROUP
+    STYLE_BASS   = 0,   // 303-style acid lines
+    STYLE_RANDOM = 1,   // the untouched base pattern
+    STYLE_ARP    = 2,   // ordered runs, direction from the STYLE position
 };
 
 enum ArpMode {
     ARP_UP = 0, ARP_DOWN = 1, ARP_UPDOWN = 2, ARP_DOWNUP = 3,
 };
 
-constexpr int SEEDS_PER_GROUP = 32;
-constexpr int NUM_GROUPS      = 32;
-constexpr int NUM_SEEDS       = SEEDS_PER_GROUP * NUM_GROUPS;   // 1024
+// The STYLE knob's positions. Saved patches store the index: append only.
+enum StylePos {
+    STYLE_POS_BASS = 0,
+    STYLE_POS_RAND,
+    STYLE_POS_ARP_UP,
+    STYLE_POS_ARP_DOWN,
+    STYLE_POS_ARP_UPDOWN,
+    STYLE_POS_ARP_DOWNUP,
+    NUM_STYLES
+};
 
-inline int groupForSeed(int seedIndex) {
-    return seedIndex / SEEDS_PER_GROUP + 1;     // 1..32
-}
-inline int subgroupForSeed(int seedIndex) {
-    return seedIndex % SEEDS_PER_GROUP + 1;     // 1..32
-}
+inline int clampStyle(int pos) { return clampi(pos, 0, NUM_STYLES - 1); }
 
-inline Style styleForSeed(int seedIndex) {
-    const int g = groupForSeed(seedIndex);
-    if (g <= 10) return STYLE_BASS;
-    if (g <= 21) return STYLE_RANDOM;
+inline Style styleOf(int pos) {
+    pos = clampStyle(pos);
+    if (pos == STYLE_POS_BASS) return STYLE_BASS;
+    if (pos == STYLE_POS_RAND) return STYLE_RANDOM;
     return STYLE_ARP;
 }
 
-// Only meaningful in the ARP zone.
-inline ArpMode arpModeForSeed(int seedIndex) {
-    const int sg = subgroupForSeed(seedIndex);          // 1..32
-    if (sg <= 8)  return ARP_UP;
-    if (sg <= 16) return ARP_DOWN;
-    if (sg <= 24) return ARP_UPDOWN;
-    return ARP_DOWNUP;
+// Only meaningful for the ARP positions.
+inline ArpMode arpModeOf(int pos) {
+    switch (clampStyle(pos)) {
+        case STYLE_POS_ARP_DOWN:    return ARP_DOWN;
+        case STYLE_POS_ARP_UPDOWN:  return ARP_UPDOWN;
+        case STYLE_POS_ARP_DOWNUP:  return ARP_DOWNUP;
+        default:                    return ARP_UP;
+    }
 }
 
-// Knobs <-> seed index. RESEED needs the reverse direction so it can drive
-// the knobs to match the pattern it just picked — if the knobs stopped
-// agreeing with what is playing, the seed would no longer be reproducible by
-// hand, which is the whole promise of the module.
-inline int seedIndexFor(int group, int subgroup) {
-    group    = clampi(group,    1, NUM_GROUPS);
-    subgroup = clampi(subgroup, 1, SEEDS_PER_GROUP);
-    return (group - 1) * SEEDS_PER_GROUP + (subgroup - 1);
-}
-
-inline void seedKnobsFor(int seedIndex, int& group, int& subgroup) {
-    seedIndex = clampi(seedIndex, 0, NUM_SEEDS - 1);
-    group     = seedIndex / SEEDS_PER_GROUP + 1;
-    subgroup  = seedIndex % SEEDS_PER_GROUP + 1;
-}
-
-inline const char* styleName(int seedIndex) {
-    switch (styleForSeed(seedIndex)) {
-        case STYLE_BASS: return "BASS";
-        case STYLE_ARP:
-            switch (arpModeForSeed(seedIndex)) {
-                case ARP_UP:     return "ARP\u2191";
-                case ARP_DOWN:   return "ARP\u2193";
-                case ARP_UPDOWN: return "ARP\u2195";
-                default:         return "ARP\u2194";
-            }
-        default: return "RAND";
+inline const char* styleName(int pos) {
+    switch (clampStyle(pos)) {
+        case STYLE_POS_BASS:        return "BASS";
+        case STYLE_POS_RAND:        return "RAND";
+        case STYLE_POS_ARP_UP:      return "ARP\u2191";
+        case STYLE_POS_ARP_DOWN:    return "ARP\u2193";
+        case STYLE_POS_ARP_UPDOWN:  return "ARP\u2195";
+        default:                    return "ARP\u2194";
     }
 }
 
@@ -276,7 +259,7 @@ inline const char* styleName(int seedIndex) {
 // the module wants acid, so this is what got built instead.
 
 constexpr float BASS_DOWNBEAT_CHANCE = 0.85f;  // how often step 1 leads the pattern
-constexpr int   BASS_RUNS            = 4;      // runs of consecutive 16ths per seed
+constexpr int   BASS_RUNS            = 4;      // runs of consecutive 16ths per roll
 constexpr int   BASS_RUN_MIN         = 2;
 constexpr int   BASS_RUN_SPAN        = 3;      // run length = MIN .. MIN+SPAN-1
 constexpr float BASS_SLIDE_CHANCE    = 0.32f;  // ties are common in acid
@@ -302,20 +285,15 @@ inline int acidRole(float r) {
     return ACID_FOURTH;
 }
 
-inline void applyStyle(int seedIndex, Pattern& pat) {
-    const Style style = styleForSeed(seedIndex);
-    if (style == STYLE_RANDOM)
-        return;                              // no-op, and no stream consumed
-
+// The BASS row: the base pattern reshaped into a 303 line.
+inline void shapeBass(Xorshift32& rng, Pattern& pat) {
     StepData* steps = pat.steps;
-    auto rng = attrRng(seedIndex, SALT_STYLE);
-
-    if (style == STYLE_BASS) {
-        // ── Rhythm: runs of sixteenths, per seed ────────────────────────────
+    {
+        // ── Rhythm: runs of sixteenths, per roll ────────────────────────────
         // Build a priority order of step positions, then lay weights 1..16
-        // along it. Because the run positions come from the seed, two bass
-        // seeds do NOT share a rhythm — which a fixed beat-priority table
-        // would have forced on all 320 of them.
+        // along it. Because the run positions are rolled, two bass rows do
+        // NOT share a rhythm — which a fixed beat-priority table would have
+        // forced on every one of them (see docs/DESIGN.md § The bass zone).
         int  pri[MAX_STEPS];
         bool used[MAX_STEPS] = {};
         int  n = 0;
@@ -335,7 +313,7 @@ inline void applyStyle(int seedIndex, Pattern& pat) {
             if (!used[i]) { pri[n++] = i; used[i] = true; }
 
         // Laying 1..16 along a permutation of positions IS a permutation, so
-        // DENSITY stays exactly linear (invariant 3).
+        // DENSITY stays exact and nested.
         for (int k = 0; k < MAX_STEPS; k++)
             steps[pri[k]].weight = k + 1;
 
@@ -361,12 +339,13 @@ inline void applyStyle(int seedIndex, Pattern& pat) {
         // work that long gates would otherwise do.
         for (int i = 0; i < MAX_STEPS; i++)
             steps[i].gateIndex = rng.nextFloat() < 0.65f ? 0 : 1;
-        return;
     }
+}
 
-    // ── STYLE_ARP ───────────────────────────────────────────────────────────
-    // Direction comes from the SUBGROUP knob, per the spec. Sort the whole
-    // sixteen-step pitch set, then read it out in the chosen shape.
+// An ARP row: the base pattern's pitches sorted, then read out in the
+// direction the STYLE position names.
+inline void shapeArp(Xorshift32& rng, ArpMode mode, Pattern& pat) {
+    StepData* steps = pat.steps;
     int sorted[MAX_STEPS];
     for (int i = 0; i < MAX_STEPS; i++) sorted[i] = steps[i].pitchIndex;
     for (int a = 0; a < MAX_STEPS; a++)
@@ -375,7 +354,6 @@ inline void applyStyle(int seedIndex, Pattern& pat) {
                 const int t = sorted[a]; sorted[a] = sorted[b]; sorted[b] = t;
             }
 
-    const ArpMode mode = arpModeForSeed(seedIndex);
     for (int i = 0; i < MAX_STEPS; i++) {
         int pick;
         switch (mode) {
@@ -406,9 +384,33 @@ inline void applyStyle(int seedIndex, Pattern& pat) {
     }
 }
 
-inline void generatePattern(int seedIndex, Pattern& pat) {
-    generateBasePattern(seedIndex, pat);
-    applyStyle(seedIndex, pat);
+// ── The roll: one row per STYLE position ────────────────────────────────────
+
+struct Roll {
+    Pattern rows[NUM_STYLES];
+};
+
+// Fill every row from one draw of entropy. The RAND row is the base pattern
+// itself; BASS and the ARPs are shaped from it. Each ARP row draws its accents
+// independently, so the four directions are not just reorderings of one
+// another's dynamics.
+inline void rollPatterns(const RollEntropy& e, Roll& roll) {
+    Pattern base;
+    generateBasePattern(e, base);
+
+    roll.rows[STYLE_POS_RAND] = base;
+
+    roll.rows[STYLE_POS_BASS] = base;
+    {
+        auto rng = laneRng(e, LANE_BASS);
+        shapeBass(rng, roll.rows[STYLE_POS_BASS]);
+    }
+
+    auto arpRng = laneRng(e, LANE_ARP);
+    for (int pos = STYLE_POS_ARP_UP; pos <= STYLE_POS_ARP_DOWNUP; pos++) {
+        roll.rows[pos] = base;
+        shapeArp(arpRng, arpModeOf(pos), roll.rows[pos]);
+    }
 }
 
 } // namespace nzzl

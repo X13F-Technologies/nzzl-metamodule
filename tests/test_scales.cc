@@ -2,6 +2,7 @@
 // Build & run:  ./tests/run_tests.sh
 
 #include "../src/scales.hh"
+#include "rolls.hh"
 #include <cstdio>
 #include <cmath>
 
@@ -18,6 +19,7 @@ static int failures = 0;
     } while (0)
 
 using namespace nzzl;
+using namespace nzzl_test;
 
 static const float EPS = 1e-4f;
 
@@ -141,12 +143,12 @@ static void test_octave_range() {
 }
 
 // Every quantized note lands on a real semitone that belongs to the scale,
-// across all 1024 seeds x 12 scales x 12 roots x 5 octave ranges.
+// across all 1024 rolls x 12 scales x 12 roots x 5 octave ranges.
 static void test_quantized_notes_in_scale() {
     long checked = 0;
-    for (int seed = 0; seed < 1024; seed++) {
+    for (int roll = 0; roll < NUM_ROLLS; roll++) {
         Pattern pat;
-        generatePattern(seed, pat);
+        anyPatternFor(roll, pat);
         const StepData* st = pat.steps;
         for (int s = FIRST_SCALE; s < NUM_SCALES; s++) {
             const Scale& sc = getScale(s);
@@ -160,20 +162,20 @@ static void test_quantized_notes_in_scale() {
                         float semiF = v * 12.f;
                         int   semi  = int(std::lround(semiF));
                         CHECK(std::fabs(semiF - float(semi)) < EPS,
-                              "seed %d scale %s root %d: %f V is not a semitone",
-                              seed, sc.name, root, v);
+                              "roll %d scale %s root %d: %f V is not a semitone",
+                              roll, sc.name, root, v);
 
                         // belongs to the scale, relative to the root
                         int rel = ((semi - root) % 12 + 12) % 12;
                         CHECK(scaleContains(sc, rel),
-                              "seed %d step %d scale %s root %d: %d is not in scale",
-                              seed, i, sc.name, root, rel);
+                              "roll %d step %d scale %s root %d: %d is not in scale",
+                              roll, i, sc.name, root, rel);
 
                         // octave component respects the knob
                         int oct = (semi - root) / 12;
                         CHECK(oct >= 0 && oct < range,
-                              "seed %d scale %s: octave %d exceeds range %d",
-                              seed, sc.name, oct, range);
+                              "roll %d scale %s: octave %d exceeds range %d",
+                              roll, sc.name, oct, range);
                         checked++;
                     }
                 }
@@ -209,9 +211,9 @@ static void test_root_transposes() {
 // Root is a whole-semitone transpose, so for every root the pattern must use
 // the SAME scale degrees — only the key moves.
 static void test_root_stays_quantized() {
-    for (int seed = 0; seed < 256; seed++) {
+    for (int roll = 0; roll < 256; roll++) {
         Pattern pat;
-        generatePattern(seed, pat);
+        anyPatternFor(roll, pat);
         const StepData* st = pat.steps;
         for (int sc = FIRST_SCALE; sc < NUM_SCALES; sc++) {
             const Scale& scale = getScale(sc);
@@ -234,18 +236,18 @@ static void test_root_stays_quantized() {
                         float semiF = v * 12.f;
                         int   semi  = int(std::lround(semiF));
                         CHECK(std::fabs(semiF - float(semi)) < EPS,
-                              "seed %d scale %s root %d: %f V left the semitone grid",
-                              seed, scale.name, root, v);
+                              "roll %d scale %s root %d: %f V left the semitone grid",
+                              roll, scale.name, root, v);
 
                         // still in key, and on the SAME degree as at root C
                         int rel = ((semi - root) % 12 + 12) % 12;
                         CHECK(scaleContains(scale, rel),
-                              "seed %d scale %s root %d step %d: %d out of key",
-                              seed, scale.name, root, i, rel);
+                              "roll %d scale %s root %d step %d: %d out of key",
+                              roll, scale.name, root, i, rel);
                         CHECK(rel == baseRel[i],
-                              "seed %d scale %s root %d step %d: degree changed "
+                              "roll %d scale %s root %d step %d: degree changed "
                               "from %d to %d — root did more than transpose",
-                              seed, scale.name, root, i, baseRel[i], rel);
+                              roll, scale.name, root, i, baseRel[i], rel);
                     }
                 }
             }
@@ -291,14 +293,14 @@ static void test_contour_monotonic() {
 static void test_raw_mode() {
     float lo = 1e9f, hi = -1e9f;
     int offGrid = 0, total = 0;
-    for (int seed = 0; seed < 1024; seed++) {
+    for (int roll = 0; roll < NUM_ROLLS; roll++) {
         Pattern pat;
-        generatePattern(seed, pat);
+        anyPatternFor(roll, pat);
         const StepData* st = pat.steps;
         QuantizeParams p{ SCALE_RAW, 0, 5 };       // unquantized, root 0, 5 octaves
         for (int i = 0; i < MAX_STEPS; i++) {
             float v = pitchVoltage(st[i], p);
-            CHECK(v >= 0.f && v < 5.f, "seed %d raw voltage %f outside 0–5 V", seed, v);
+            CHECK(v >= 0.f && v < 5.f, "roll %d raw voltage %f outside 0–5 V", roll, v);
             if (v < lo) lo = v;
             if (v > hi) hi = v;
             float semiF = v * 12.f;
@@ -331,19 +333,19 @@ static void test_raw_mode() {
            offGrid, total);
 }
 
-// Same seed + same params must always give the same voltage.
+// Same roll + same params must always give the same voltage.
 static void test_pitch_determinism() {
-    for (int seed = 0; seed < 1024; seed++) {
+    for (int roll = 0; roll < NUM_ROLLS; roll++) {
         Pattern pa, pb;
-        generatePattern(seed, pa);
-        generatePattern(seed, pb);
+        anyPatternFor(roll, pa);
+        anyPatternFor(roll, pb);
         const StepData *a = pa.steps, *b = pb.steps;
-        QuantizeParams p{ seed % NUM_SCALES, seed % 12, 1 + (seed % 5) };
+        QuantizeParams p{ roll % NUM_SCALES, roll % 12, 1 + (roll % 5) };
         for (int i = 0; i < MAX_STEPS; i++)
             CHECK(pitchVoltage(a[i], p) == pitchVoltage(b[i], p),
-                  "seed %d step %d pitch not deterministic", seed, i);
+                  "roll %d step %d pitch not deterministic", roll, i);
     }
-    printf("pitch determinism: identical voltages for identical seed+params\n");
+    printf("pitch determinism: identical voltages for identical roll+params\n");
 }
 
 int main() {

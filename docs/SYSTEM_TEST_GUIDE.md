@@ -27,7 +27,13 @@ needs a real Rack. **That gap is exactly what this guide covers.**
 The engine extraction at Task 7 moved a lot of this guide's old burden into
 the harness. What is left is the part a machine genuinely cannot judge: the
 adapter is thin, but a swapped jack would still pass every suite; and no test
-can tell you whether the arp zone sounds like an arp.
+can tell you whether the arp style sounds like an arp.
+
+> **Item 16 (2026-11-16): there are no seeds.** GROUP / SUBGROUP are gone;
+> RESEED and RANDOM **Generate** a fresh roll, the **STYLE** knob picks one of
+> six precomputed rows, and the roll is saved with the patch. A pattern can no
+> longer be dialled back by number — to come back to one, save the patch.
+> Tests below that used to say "seed 5/5" now say "the current roll".
 
 Sections are marked **[NOW]** (built, test it) or **[PENDING]** (not built
 yet — acceptance criteria recorded in advance, skip for now).
@@ -77,13 +83,14 @@ Audio-8.
 - Scope: TIME knob set so ~4 seconds fit on screen
 
 **NZZL knobs**
-`GROUP 1 · SUBGROUP 1 · DENSITY 8 · LENGTH 16 · CLK DIV 1 · OCT RANGE 2 ·
+`STYLE BASS · DENSITY 8 · LENGTH 16 · CLK DIV 1 · OCT RANGE 2 ·
 ROOT C · SCALE Natural Minor · SLIDE 0 · SHAPE centre · GATE 100% ·
 ACCENT 100% · P.OFFSET 0 · SHIFT 0 · SWING 0`
 
 The panel is three columns — controls left, jacks middle, outputs bottom
-right — with a three-line display across the top showing the seed, the zone
-and the root+scale.
+right — with a three-line display across the top showing density/length
+(`8/16`), the STYLE and the root+scale. The knob position to the right of
+STYLE is deliberately empty: it is held for PITCH LENGTH (item 7).
 
 > **There is no SCALE LOCK switch.** Unquantized is **position 0 of the SCALE
 > knob**. One control, no interaction to reason about.
@@ -114,8 +121,8 @@ meaningful.
 | ID | Do | Expect |
 |---|---|---|
 | S.1 | Add NZZL to a rack | Module appears, no Rack crash, no red "failed to load" panel |
-| S.2 | Look at the panel | 20 HP: 15 knobs, a RANDOM button, 7 input jacks, 3 output jacks, all labelled, nothing overlapping or off the edge |
-| S.2b | Look at the display | Three lines: `1 . 1`, `BASS`, `C MINOR`. Legible, not clipped |
+| S.2 | Look at the panel | 20 HP: 14 knobs (STYLE top left, an empty slot beside it held for PITCH LENGTH), a RANDOM button, 7 input jacks, 3 output jacks, all labelled, nothing overlapping or off the edge |
+| S.2b | Look at the display | Three lines: `8/16`, `BASS`, `C MINOR`. Legible, not clipped |
 | S.3 | Start the LFO clock | Gate LED activity on the Scope; you hear notes |
 | S.4 | Let it run 60 s | No dropouts, no clicks on every note, no runaway CPU (right-click module → CPU meter stays low) |
 | S.5 | Remove and re-add the module | No crash |
@@ -144,19 +151,21 @@ original spec, not a bug.
 
 ---
 
-## 3. Seed system **[NOW]** — Task 3
+## 3. Generate, STYLE and the roll **[NOW]** — item 16 (replaces Task 3's seeds)
 
 | ID | Do | Expect |
 |---|---|---|
-| T3.1 | GROUP 1, step SUBGROUP 1 → 2 → 3 → 4 | Each click gives a clearly **different** pattern — different notes *and* different rhythm. Not a subtle variation |
-| T3.2 | SUBGROUP 1, step GROUP 1 → 2 → 3 → 4 | Same: each is its own pattern |
-| T3.3 | Set GROUP 7 / SUBGROUP 19, listen, note it. Move both knobs away, then set 7/19 again | **Identical** pattern returns — same notes, same rhythm, same accents |
-| T3.4 | Sweep SUBGROUP fast across its whole range while running | No clicks, stalls or stuck gates; pattern changes cleanly on each value |
-| T3.5 | Try ~10 scattered seeds | None are silent; none are a single repeated note; all sound like patterns |
+| T3.1 | Press **RANDOM** several times, letting each loop play | Each press gives a clearly **different** pattern — different notes *and* different rhythm — starting at the top of the next loop |
+| T3.2 | Turn **STYLE** through all six detents: BASS, RAND, ARP↑, ARP↓, ARP↕, ARP↔ | Six positions, each clicks into place; the display's middle line names each one; the pattern changes at the next loop wrap |
+| T3.3 | Note the BASS pattern. Turn STYLE to RAND, ARP↓, then back to BASS | **Identical** BASS pattern returns — same notes, rhythm, accents. A knob never re-rolls; only Generate does |
+| T3.4 | At RAND, note the notes. Switch to ARP↑ | Same set of notes (and the same rhythm), now walking upward — the ARP rows reorder the RAND row's notes within one roll |
+| T3.5 | Press RANDOM, then step STYLE through all six again | Every position now has a new pattern; returning to a position still repeats it |
+| T3.6 | Sweep STYLE fast back and forth while running | No clicks, stalls or stuck gates; changes land cleanly on the loop wrap |
+| T3.7 | Press RANDOM ~20 times | None silent; none a single repeated note; no two in a row that sound the same |
+| T3.8 | Add a fresh NZZL from the browser | It plays a pattern straight away (a new module rolls once); no display flash |
 
-**T3.3 is the determinism guarantee users depend on.** If a seed ever comes
-back different, stop and report it — it means a saved patch could change
-sound on reload.
+**T3.3 is the guarantee that replaces seed recall.** If a STYLE position
+ever comes back different without a Generate, stop and report it.
 
 ---
 
@@ -166,15 +175,15 @@ Watch GATE on Scope CH1 and listen.
 
 | ID | Do | Expect |
 |---|---|---|
-| T4.1 | DENSITY 8, default seed | Gates fire **irregularly** — not every step, not a steady pulse |
+| T4.1 | DENSITY 8, the current roll | Gates fire **irregularly** — not every step, not a steady pulse |
 | T4.2 | Set DENSITY 1 | Exactly **one** step in the 16 plays. Never silent |
 | T4.3 | Set DENSITY 16 | **Every** step plays |
 | T4.4 | Step DENSITY 1 → 2 → 3 … → 16, pausing at each | Each click **adds exactly one** new gate and **keeps all the previous ones**. Nothing that was playing drops out |
 | T4.5 | Step back down 16 → 1 | Steps drop out one at a time, in reverse of the order they appeared |
-| T4.6 | Note the pattern at seed 5/5 density 6. Change seed away and back | Identical gate pattern |
+| T4.6 | Note the pattern at density 6. Turn STYLE away and back | Identical gate pattern |
 | T4.7 | Halve the LFO clock rate | Gates get **proportionally longer** — the shape of the rhythm stays the same, it just stretches |
 | T4.8 | Set CLK DIV = 4 | Gates lengthen to match the slower step rate — they don't stay short and stabby |
-| T4.9 | Compare several seeds at DENSITY 8 | Gate *lengths* vary step to step within a pattern (some stabs, some sustains), not all identical |
+| T4.9 | Compare several rolls (RANDOM) at DENSITY 8, STYLE RAND | Gate *lengths* vary step to step within a pattern (some stabs, some sustains), not all identical |
 | T4.10 | Set LENGTH 4, sweep DENSITY | Within a 4-step loop the count is no longer exactly N — **this is expected and documented**; just confirm it still feels monotonic (more knob = more notes) |
 
 ---
@@ -189,7 +198,7 @@ Watch VELOCITY on Scope CH2.
 | T6.2 | Watch during a silent step (no gate) | Velocity **holds its last value** — it does not drop to 0 or drift |
 | T6.3 | Patch VELOCITY into VCA CV | Notes have audibly different loudness |
 | T6.4 | Set DENSITY 1 | Velocity changes only once per loop, at that one note |
-| T6.5 | Recall a seed used earlier | Same velocity sequence as before |
+| T6.5 | Turn STYLE away and back | Same velocity sequence as before |
 
 **Why it holds:** sample-and-hold is deliberate, so downstream VCAs and
 filters don't jump around during silence.
@@ -259,47 +268,27 @@ switch) and **1–12 are the handoff spec's twelve scales, in its order**.
 | T5.22 | Sweep OCT RANGE 1 → 5 → 1 | Returns to the same narrow pattern. No stuck high notes |
 | T5.23 | Change OCT RANGE while a note sustains | Held note jumps immediately, same as ROOT |
 
-### 6.5 Known-good reference data
+### 6.5 Example roll data
 
-Set **GROUP 1 · SUBGROUP 1 · SCALE Natural Minor (position 2) · ROOT C ·
-OCT RANGE 2 · SLIDE 0 · GATE 100% · ACCENT 100%**, then use CLK DIV or a slow clock to walk the pattern
-one step at a time. Read CV PITCH on the Scope.
+△ Since item 16 there is no seed to dial up, so these numbers **cannot be
+reproduced on the module** — every Generate is a fresh roll. They show what a
+BASS row looks like from the harness's reproducible roll 0, for reading a
+pattern on the scope. Settings assumed: **SCALE Natural Minor (position 2) ·
+ROOT C · OCT RANGE 2 · SLIDE 0 · GATE 100% · ACCENT 100%**.
 
-> GROUP 1 is in the **BASS** zone, so these numbers are a 303 line: the
-> downbeat leads, a tied run sits at steps 11–14, and the pitches are almost
-> all root (C) and fifth (G). `―` in the Tie column means that step slides
-> into the next and its gate does not drop.
->
-> Note lengths for this pattern: 0.23 / 0.52 / 0.72 of a step
-
-These are the exact values the code produces for seed index 0. `●` = the step
-plays at that DENSITY. Note names assume 0 V = C4, VCO at default tune.
-
-| Step | Weight | On @ D4 | On @ D8 | Gate | Tie | Vel (V) | **Pitch (V)** | Note |
-|---|---|---|---|---|---|---|---|---|
-| 1 | 1 | ● | ● | 0.23 | ― | 5.50 | +0.583 | G4 |
-| 2 | 5 | · | ● | 0.23 |   | 10.00 | +0.583 | G4 |
-| 3 | 6 | · | ● | 0.52 |   | 10.00 | +0.000 | C4 |
-| 4 | 10 | · | · | 0.52 |   | 10.00 | +0.000 | C4 |
-| 5 | 11 | · | · | 0.23 |   | 5.50 | +0.583 | G4 |
-| 6 | 12 | · | · | 0.52 |   | 5.50 | +0.833 | A#4 |
-| 7 | 13 | · | · | 0.23 |   | 5.50 | +0.583 | G4 |
-| 8 | 14 | · | · | 0.23 |   | 5.50 | +0.583 | G4 |
-| 9 | 15 | · | · | 0.23 |   | 5.50 | +0.000 | C4 |
-| 10 | 16 | · | · | 0.23 |   | 5.50 | +0.250 | D#4 |
-| 11 | 2 | ● | ● | 0.52 | ― | 10.00 | +0.000 | C4 |
-| 12 | 3 | ● | ● | 0.23 | ― | 10.00 | +0.000 | C4 |
-| 13 | 4 | ● | ● | 0.52 | ― | 10.00 | +0.000 | C4 |
-| 14 | 7 | · | ● | 0.23 | ― | 10.00 | +0.583 | G4 |
-| 15 | 8 | · | ● | 0.23 |   | 5.50 | +0.417 | F4 |
-| 16 | 9 | · | · | 0.23 |   | 10.00 | +0.583 | G4 |
-
-Regenerate this table any time the generator changes — the tool prints it as
-markdown, ready to paste back in, plus two more seeds:
+> A BASS row is a 303 line: the downbeat usually leads, runs of sixteenths,
+> and the pitches mostly root (C) and fifth (G). `―` in the Tie column means
+> that step slides into the next and its gate does not drop.
 
 ```bash
 c++ -std=c++20 -O1 -o /tmp/nzzl_refgen tests/refgen.cc && /tmp/nzzl_refgen
 ```
+
+prints roll 0's BASS, RAND and ARP↑ rows as markdown tables (`●` = the step
+plays at that DENSITY; note names assume 0 V = C4).
+
+To check a **real** pattern against itself instead: save the patch, reload,
+and compare (T12.1).
 
 ---
 
@@ -310,8 +299,8 @@ c++ -std=c++20 -O1 -o /tmp/nzzl_refgen tests/refgen.cc && /tmp/nzzl_refgen
 | X.1 | Wiggle every knob at once while running for 30 s | No crash, no stuck gate, no silence that doesn't recover |
 | X.2 | Set LENGTH 2, DENSITY 1, CLK DIV 16 | Extreme but functional — something still plays eventually |
 | X.3 | Set LENGTH 16, DENSITY 16, CLK DIV 1, LFO at 20 Hz | Fast machine-gun playback, no dropouts, CPU stays sane |
-| X.4 | Run two NZZL instances from one clock, both at seed 3/3 | They stay **perfectly in sync and identical** — proves nothing hidden is per-instance random |
-| X.5 | Same two instances, different seeds | Independent patterns, still rhythmically locked to the clock |
+| X.4 | Duplicate NZZL (Ctrl/Cmd-D), save and reload the patch so both start together, run both from one clock | The duplicate carries the roll: they stay **perfectly in sync and identical** — proves nothing random happens at playback |
+| X.5 | Press RANDOM on one of them | Independent patterns, still rhythmically locked to the clock |
 | X.6 | Save the patch, quit Rack, reopen | Knob positions and pattern restore. Full patch-save tests are in §13 |
 | X.7 | Leave running 10 minutes | No drift, no degradation, no memory growth |
 | X.8 | Bypass the module (Ctrl/Cmd-E), then un-bypass | Clean recovery |
@@ -332,47 +321,47 @@ Watch CV PITCH on the Scope. Roughly 1 step in 4 is flagged for slide.
 | T7.5 | Halve the clock rate, SLIDE unchanged | Glides get **proportionally longer** — the feel survives a tempo change |
 | T7.6 | Return SLIDE to 0 mid-glide | Later notes jump again immediately |
 | T7.7 | Listen with SLIDE up | Should read as portamento/303-style glide, not as being out of tune |
-| T7.8 | Patch an LFO into **cvSLIDE** with the SLIDE knob at noon | Glide comes and goes. Notes the seed never flagged start sliding too — that is intended |
+| T7.8 | Patch an LFO into **cvSLIDE** with the SLIDE knob at noon | Glide comes and goes. Notes the roll never flagged start sliding too — that is intended |
 | T7.9 | Turn SLIDE fully **CCW** with cvSLIDE still patched and high | **All glide stops.** The attenuator wins over the CV, always |
 
 ---
 
-## 9. Style zones **[NOW]** — Task 8
+## 9. STYLE **[NOW]** — Task 8, item 16
 
-The GROUP knob is three zones, and inside ARP the SUBGROUP knob picks the
-direction. **This is the section where your ear is the only instrument that
-counts** — the harness proved the statistics, not the music.
+The STYLE knob has six detents; each is one row of the current roll.
+**This is the section where your ear is the only instrument that counts** —
+the harness proved the statistics, not the music.
 
-| GROUP | Zone | Display | Character |
-|---|---|---|---|
-| 1–10 | Acid bass | `BASS` | 303-style: runs of sixteenths, ties, root hammering, octave jumps |
-| 11–21 | Random | `RAND` | The unshaped generator — anything goes |
-| 22–32 | Arpeggio | `ARP↑ ↓ ↕ ↔` | Ordered runs; SUBGROUP 1–8 up, 9–16 down, 17–24 up-down, 25–32 down-up |
+| STYLE | Display | Character |
+|---|---|---|
+| BASS | `BASS` | 303-style: runs of sixteenths, ties, root hammering, octave jumps |
+| RAND | `RAND` | The unshaped generator — anything goes |
+| ARP↑ ARP↓ ARP↕ ARP↔ | `ARP↑ ↓ ↕ ↔` | The RAND row's notes, sorted and read up / down / up-down / down-up |
 
-### 9.1 The acid zone
+### 9.1 The acid style
 
 | ID | Do | Expect |
 |---|---|---|
-| T8.1 | GROUP 3, DENSITY 6, SLIDE up, a resonant low-pass after the VCO | It should sound like an **acid line** — sixteenth runs, notes gliding into each other, the root hammered |
-| T8.2 | **The one that was broken.** GROUP 1, DENSITY 4. Note which steps play. Now step GROUP 2, 3, 4 … 10 at the same density | **Each group plays a different rhythm.** They must not all land on the same four positions in the bar |
-| T8.3 | Same again at DENSITY 2, then 6 | Still varied. At 2 most seeds start on the downbeat — that is intended, not a collapse |
-| T8.4 | GROUP 3, sweep DENSITY 1→8 | Notes fill in as **runs** — new notes tend to sit next to existing ones rather than scatter |
-| T8.5 | Listen to the pitches in any bass seed | Dominated by the **root**, with the fifth next. Should feel hypnotic and repetitive, not melodic |
+| T8.1 | STYLE BASS, DENSITY 6, SLIDE up, a resonant low-pass after the VCO | It should sound like an **acid line** — sixteenth runs, notes gliding into each other, the root hammered |
+| T8.2 | **The one that was broken.** STYLE BASS, DENSITY 4. Note which steps play. Press RANDOM ~10 times at the same density | **Each roll plays a different rhythm.** They must not all land on the same four positions in the bar |
+| T8.3 | Same again at DENSITY 2, then 6 | Still varied. At 2 most rolls start on the downbeat — that is intended, not a collapse |
+| T8.4 | STYLE BASS, sweep DENSITY 1→8 | Notes fill in as **runs** — new notes tend to sit next to existing ones rather than scatter |
+| T8.5 | Listen to the pitches in a few BASS rolls | Dominated by the **root**, with the fifth next. Should feel hypnotic and repetitive, not melodic |
 | T8.6 | Listen for **octave jumps** | Occasional notes an octave up. Roughly one note in five |
-| T8.7 | Set OCT RANGE 1, then 5, in a bass seed | The octave jumps stay **one octave** at range 5 — they do not grow into four-octave leaps |
+| T8.7 | Set OCT RANGE 1, then 5, on STYLE BASS | The octave jumps stay **one octave** at range 5 — they do not grow into four-octave leaps |
 
-### 9.2 The other zones
+### 9.2 The other styles
 
 | ID | Do | Expect |
 |---|---|---|
-| T8.8 | GROUP 16 (RAND), DENSITY 4 | Noticeably more scattered than any bass seed. No root hammering |
-| T8.9 | GROUP 24, SUBGROUP 3 (`ARP↑`) | Pitches **walk upward** through the pattern |
-| T8.10 | Same group, SUBGROUP 11 (`ARP↓`) | Pitches walk **downward** |
-| T8.11 | SUBGROUP 19 (`ARP↕`) | Up through the first half, back **down** through the second |
-| T8.12 | SUBGROUP 27 (`ARP↔`) | Down first, then back up |
-| T8.13 | Any arp seed with SLIDE up | Arps **never glide** — slide is a bass/random thing |
-| T8.14 | Cross the boundaries: GROUP 10→11, then 21→22 | Character changes at the boundary. The zone line changes to match |
-| T8.15 | **Judgement call.** Do the zones earn their place? | Is BASS convincingly acid? Are 10/11/11 groups the right split? Opinions wanted |
+| T8.8 | STYLE RAND, DENSITY 4 | Noticeably more scattered than BASS. No root hammering |
+| T8.9 | STYLE `ARP↑` | Pitches **walk upward** through the pattern |
+| T8.10 | STYLE `ARP↓` | Pitches walk **downward** |
+| T8.11 | STYLE `ARP↕` | Up through the first half, back **down** through the second |
+| T8.12 | STYLE `ARP↔` | Down first, then back up |
+| T8.13 | An ARP with SLIDE up | Arps **glide on some steps** — they keep the RAND row's slide flags (about one step in four) |
+| T8.14 | Step STYLE BASS → RAND → ARP↑ | Character changes at each detent, on the loop wrap. The display's middle line changes to match |
+| T8.15 | **Judgement call.** Do the styles earn their place? | Is BASS convincingly acid? Are six positions the right set? Opinions wanted |
 
 ---
 
@@ -387,28 +376,28 @@ values. Each pattern has **three note lengths** and **three velocity layers**.
 | G.2 | Sweep GATE 100% → 1% | Everything gets shorter together, staying in proportion. At the bottom, tight clicks |
 | G.3 | Sweep GATE 100% → 200% | Notes lengthen. Around and past 100% the **long** notes start tying into the next step while the **short** ones stay staccato |
 | G.4 | GATE 200%, listen | A partly-legato line, not a solid drone. If every note ties, that is wrong |
-| G.5 | Change seed at GATE 150% | The three lengths change with the seed; the knob keeps its proportion |
+| G.5 | Press RANDOM at GATE 150% | The three lengths change with the roll; the knob keeps its proportion |
 | G.6 | ACCENT 100%, VELOCITY into a VCA | Clear loud/medium/quiet contrast between notes |
 | G.7 | Sweep ACCENT 100% → 0% | Contrast flattens. At 0 **every note is the same level** |
 | G.8 | ACCENT 0, watch VELOCITY on the scope | A flat line — it must not wander |
-| G.9 | Bass seed, ACCENT 100% | Accents should fall in a way that reinforces the groove, roughly one note in four |
+| G.9 | STYLE BASS, ACCENT 100% | Accents should fall in a way that reinforces the groove, roughly one note in four |
 | G.10 | **Judgement call** | Is 1–200% the right GATE range? Does ACCENT 100 give enough contrast, or too much? |
 
 ---
 
-## 11. Reseed **[NOW]** — Task 9
+## 11. Reseed = Generate **[NOW]** — Task 9, item 16
 
 Patch a manual trigger (or an LFO) into RESEED.
 
 | ID | Do | Expect |
 |---|---|---|
-| T9.1 | Send one trigger | The pattern **changes** to a new one |
-| T9.2 | Watch the GROUP and SUBGROUP knobs as it fires | They **jump to match** the new seed. The display's `G## S##` line updates too |
-| T9.3 | Note the knob values, change them away, then dial them back by hand | The reseeded pattern **returns exactly**. This is the whole point — a seed you can hear but not dial in would be a dead end |
-| T9.4 | Hold the RESEED input high continuously | Only **one** reseed happens — it is edge-triggered, not level-triggered |
-| T9.5 | Unpatch RESEED | Nothing ever reseeds on its own |
-| T9.6 | Fire RESEED 20 times | Different seeds, spread across the range — not the same few |
-| T9.7 | Reseed, then save and reload the patch | The reseeded pattern comes back (it lives on the knobs) |
+| T9.1 | Send one trigger | The pattern **changes** to a new one at the next loop wrap |
+| T9.2 | Watch the knobs and the display as it fires | **No knob moves** — there are no seed knobs any more. The display flashes amber; `8/16` and the STYLE line are unchanged |
+| T9.3 | After a trigger, step STYLE through all six and back | Every position has a new pattern from this roll, and returning to a position repeats it |
+| T9.4 | Hold the RESEED input high continuously | Only **one** Generate happens — it is edge-triggered, not level-triggered |
+| T9.5 | Unpatch RESEED | Nothing ever re-rolls on its own |
+| T9.6 | Fire RESEED 20 times | 20 different patterns — not the same few |
+| T9.7 | Trigger, then save and reload the patch | The new pattern comes back exactly (the roll is saved with the patch) |
 
 ---
 
@@ -416,8 +405,9 @@ Patch a manual trigger (or an LFO) into RESEED.
 
 **The four jacks are not all the same**, and the handoff spec is what decides
 which is which: SCALE and ROOT are **overrides** (patched, the voltage wins
-and the knob is ignored), SEED is an **offset** on its knobs, and SLIDE is
-**summed with the seed's own slide flag and then attenuated by the knob**.
+and the knob is ignored), DENSITY (the old SEED jack, item 16) is an
+**offset** on its knob, and SLIDE is **summed with the step's own slide flag
+and then attenuated by the knob**.
 
 | ID | Do | Expect |
 |---|---|---|
@@ -427,9 +417,9 @@ and the knob is ignored), SEED is an **offset** on its knobs, and SLIDE is
 | T10.4 | Constant 1 V into cvROOT (V/oct) | Names C — one octave up is the same pitch class |
 | T10.5 | Slow LFO (0–10 V) → **cvSCALE** | Steps through all 13 positions. Clean jumps, no glitching, no silence |
 | T10.6 | Hold cvSCALE near 0 V | Lands on **position 0, unquantized** — the CV can reach raw mode, which is why the switch could be folded into the knob |
-| T10.7 | Slow LFO → **cvSEED** | Sweeps through patterns continuously. At the ends it **wraps** rather than sticking |
-| T10.8 | Watch the knobs with cvSEED patched | GROUP/SUBGROUP **stay where you left them** — SEED is an offset, not an override |
-| T10.9 | LFO → **cvSLIDE**, SLIDE knob at noon | Glide comes and goes. Steps the seed never flagged start gliding as the CV rises |
+| T10.7 | DENSITY 8, slow LFO (±5 V) → **cvDENS** | Hits are **added and removed** around the knob's 8 — the ones playing never reshuffle. Display line 1 follows the effective density. At the ends it **parks** at 1 or 16 rather than wrapping |
+| T10.8 | Constant +2 V into cvDENS with DENSITY 8 | Plays as density 11 (10 V = the full 1–16 range, so 2 V ≈ 3 steps); the DENSITY knob does not move — CV DENSITY is an offset |
+| T10.9 | LFO → **cvSLIDE**, SLIDE knob at noon | Glide comes and goes. Steps the roll never flagged start gliding as the CV rises |
 | T10.10 | SLIDE knob fully CCW, cvSLIDE still high | **All glide stops.** The attenuator always wins |
 | T10.11 | Unplug each CV cable in turn while running | Each unplug hands control cleanly back to its knob. No stuck values |
 
@@ -439,14 +429,14 @@ and the knob is ignored), SEED is an **offset** on its knobs, and SLIDE is
 
 | ID | Do | Expect |
 |---|---|---|
-| T11.1 | Read the three lines at GROUP 1 / SUBGROUP 1 | `1 . 1`, `BASS`, `C MINOR` — the spec's `group . subgroup` format, no leading zeros |
-| T11.2 | Turn GROUP and SUBGROUP | The first line tracks both |
-| T11.3 | Cross the boundaries (GROUP 10→11, 21→22) | The zone line changes `BASS` → `RAND` → `ARP↑` |
-| T11.4 | In the ARP zone, step SUBGROUP through 1, 9, 17, 25 | The arrow changes: `ARP↑`, `ARP↓`, `ARP↕`, `ARP↔` |
+| T11.1 | Read the three lines with the reference patch | `8/16`, `BASS`, `C MINOR` — density / length, no leading zeros |
+| T11.2 | Turn DENSITY and LENGTH | The first line tracks both. At LENGTH 8, DENSITY 12 reads `8/8` — the effective density, clamped to the loop as it plays |
+| T11.3 | Step STYLE through all six | The middle line reads `BASS`, `RAND`, `ARP↑`, `ARP↓`, `ARP↕`, `ARP↔` |
+| T11.4 | Patch a CV into cvDENS and sweep | The first line follows the effective density, CV included |
 | T11.5 | Turn ROOT and SCALE | The third line tracks both, e.g. `G# DORIAN` |
 | T11.6 | SCALE to position 0 | The line reads `<root> RAW` — it does not pretend to be a scale |
 | T11.7 | Patch a CV into cvROOT or cvSCALE and sweep | The display follows the **effective** value, CV included |
-| T11.8 | Fire RESEED | The display **flashes amber** briefly as the new seed lands |
+| T11.8 | Fire RESEED or press RANDOM | The display **flashes amber** briefly as the new roll is made |
 | T11.9 | Look at the module in the browser (not placed in a rack) | Renders sensibly with no module attached — no crash, no blank |
 
 ---
@@ -455,11 +445,12 @@ and the knob is ignored), SEED is an **offset** on its knobs, and SLIDE is
 
 | ID | Do | Expect |
 |---|---|---|
-| T12.1 | Set a distinctive seed and knobs, save, quit Rack, reopen | Everything returns: knobs, seed, pattern |
-| T12.2 | Reseed to a new pattern, then save and reload | The reseeded pattern returns — it lives on the knobs |
+| T12.1 | Press RANDOM until you like a pattern, set distinctive knobs, save, quit Rack, reopen | Everything returns: knobs **and the exact pattern** |
+| T12.2 | After reloading, step STYLE through all six positions | Every position plays what it played before the save — the whole roll is saved, not just the playing row |
+| T12.2b | Press RANDOM and save **before** the loop wraps, then reload | The new roll is what comes back (a pending Generate is saved as the roll) |
 | T12.3 | Patch RUN, stop playback, save and reload | It comes back **stopped**. Run state is saved |
 | T12.4 | Reload and start the clock | Playback starts from a predictable place. Step position is deliberately not saved |
-| T12.5 | Load a patch saved before this build, if you have one | Knobs load without error. Note anything that sounds different and report it |
+| T12.5 | Load a patch saved before item 16, if you have one | Loads without error and plays a **fresh** pattern — old seed patches are not restored (accepted). Knobs after STYLE keep their values |
 
 ---
 
@@ -477,10 +468,10 @@ Copy `NZZL.mmplugin` to the MetaModule's SD card, then:
 | H.1 | Boot with the plugin installed | NZZL appears in the module list; no boot failure |
 | H.2 | Load NZZL into a patch | Loads without error or hang |
 | H.3 | Repeat §2–§14 on hardware | Same behaviour as in VCV Rack |
-| H.4 | **Same seed on hardware and in Rack, same knobs** | **Byte-identical pattern** — same notes, same rhythm. This is the whole point of the deterministic design |
+| H.4 | **Save a patch in Rack, load it on hardware** (or the reverse), same knobs | **Identical pattern** — same notes, same rhythm. The roll travels in the patch file |
 | H.5 | Check CPU load on the MetaModule | Headroom left for other modules |
 | H.6 | Run 30 minutes | No crash, no audio glitching, no thermal issue |
-| H.7 | Save and reload a hardware patch | Seed and knobs restore |
+| H.7 | Save and reload a hardware patch | The pattern and knobs restore |
 | H.8 | **Read the display on the physical screen** | Three lines render, update without flicker, and are legible. **Untested — the text content is verified, the rendering is not** |
 
 ---
@@ -493,12 +484,12 @@ harness-guarded; these steps confirm it by ear and eye.
 | ID | Do | Expect |
 |---|---|---|
 | F.1 | Run a steady clock with a drum machine or a visible clock LED, DENSITY 16 | The sequencer's **first step lands on the clock's first pulse**, not one sixteenth later |
-| F.2 | GROUP 3 (bass), DENSITY 4, against a kick on the downbeat | The pattern's lead note sits **on** the beat, not just before it |
+| F.2 | STYLE BASS, DENSITY 4, against a kick on the downbeat | The pattern's lead note sits **on** the beat, not just before it |
 | F.3 | Set CLK DIV 4, restart the clock | The first step still fires on the **first** pulse, not the fourth |
 | F.4 | Set LENGTH 8, sweep DENSITY 1→8 | **Every click adds a note you can hear.** This used to do nothing about half the time |
 | F.5 | LENGTH 4, 6, 12 — sweep DENSITY at each | Same: no dead clicks at any length |
 | F.6 | LENGTH 8, DENSITY 8 | All eight steps of the loop play |
-| F.7 | Change GROUP mid-bar while running | The new pattern **waits for the loop to come round** and starts from its step 1, rather than cutting in mid-phrase |
+| F.7 | Change STYLE mid-bar while running | The new pattern **waits for the loop to come round** and starts from its step 1, rather than cutting in mid-phrase |
 | F.8 | Fire RESEED or press RANDOM mid-bar | Same — it lands on the grid |
 
 ---
@@ -515,12 +506,12 @@ harness-guarded; these steps confirm it by ear and eye.
 | N.6 | SHIFT through a full 16 | You arrive back where you started |
 | N.7 | LENGTH 8, then sweep SHIFT | **Different parts of the 16-step pattern come into the loop** — not just a re-phasing of the same 8 |
 | N.8 | Turn **SWING** up with a straight kick under it | Off-beats push late, downbeats stay put. At 100% it is a hard shuffle, not a stumble |
-| N.9 | SWING up, then change seed | The groove **changes with the seed** — swing is part of a pattern's identity |
+| N.9 | SWING up, then press RANDOM | The groove **changes with the roll** — swing is part of a pattern's identity |
 | N.10 | SWING at 0 | Dead straight, exactly as before |
 | N.11 | SLIDE up, sweep **SHAPE** from left to centre to right | Glides go from fast-off-the-mark, through even, to slow-then-rushing. **Every one still lands in tune** |
 | N.12 | SHAPE at either extreme, listen to the end of a glide | No overshoot, no wobble — it settles exactly on the note |
-| N.13 | Press **RANDOM** | New pattern; GROUP and SUBGROUP jump to match; display flashes |
-| N.14 | Press RANDOM 10 times | Seeds spread across the range. Dial one back by hand and it returns |
+| N.13 | Press **RANDOM** | New pattern at the next loop wrap; no knob moves; display flashes |
+| N.14 | Press RANDOM 10 times | Ten different patterns. (There is no dialling one back — save the patch to keep it) |
 
 ---
 
@@ -533,8 +524,8 @@ placeholder chords** — say which ones you actually want and they get swapped.
 |---|---|---|
 | C.1 | SCALE to Minor triad | Only root, minor third and fifth ever sound |
 | C.2 | Step through all five chord positions | Each is unambiguously its own chord |
-| C.3 | GROUP 3 (bass) on **Minor triad** | The bassline still favours **root and fifth**. If it sounds like it is hammering the third, the role mapping is wrong |
-| C.4 | Same bass seed, switch triad → Minor 7th → Natural Minor | The line keeps its shape and its root emphasis; only the available colour changes |
+| C.3 | STYLE BASS on **Minor triad** | The bassline still favours **root and fifth**. If it sounds like it is hammering the third, the role mapping is wrong |
+| C.4 | Same BASS roll, switch triad → Minor 7th → Natural Minor | The line keeps its shape and its root emphasis; only the available colour changes |
 | C.5 | A chord with P.OFFSET | Steps through the chord tones, staying in the chord |
 | C.6 | A chord with a low OCT RANGE | Few distinct pitches, lots of repetition — expected with three notes |
 
@@ -551,15 +542,15 @@ NZZL system test — date: ____________  build/commit: ____________
 
 Part 1  Smoke            S.1–S.5        [ ] pass  [ ] fail: ______________
 Part 2  Clock/Run/Len    T2.1–T2.11     [ ] pass  [ ] fail: ______________
-Part 3  Seed system      T3.1–T3.5      [ ] pass  [ ] fail: ______________
+Part 3  Generate/STYLE   T3.1–T3.8      [ ] pass  [ ] fail: ______________
 Part 4  Gate/Density     T4.1–T4.10     [ ] pass  [ ] fail: ______________
 Part 5  Velocity         T6.1–T6.5      [ ] pass  [ ] fail: ______________
 Part 6  Pitch/Scales     T5.1–T5.27     [ ] pass  [ ] fail: ______________
 Part 7  Cross/Stress     X.1–X.8        [ ] pass  [ ] fail: ______________
 Part 8  Slide / ties     T7.1–T7.9      [ ] pass  [ ] fail: ______________
-Part 9  Style zones      T8.1–T8.15     [ ] pass  [ ] fail: ______________
+Part 9  STYLE            T8.1–T8.15     [ ] pass  [ ] fail: ______________
 Part 10 Gate & Accent    G.1–G.10       [ ] pass  [ ] fail: ______________
-Part 11 Reseed           T9.1–T9.7      [ ] pass  [ ] fail: ______________
+Part 11 Reseed/Generate  T9.1–T9.7      [ ] pass  [ ] fail: ______________
 Part 12 CV inputs        T10.1–T10.11   [ ] pass  [ ] fail: ______________
 Part 13 Display          T11.1–T11.9    [ ] pass  [ ] fail: ______________
 Part 14 Patch save       T12.1–T12.5    [ ] pass  [ ] fail: ______________
@@ -569,10 +560,10 @@ Part 17 New controls     N.1–N.14       [ ] pass  [ ] fail: ______________
 Part 18 Chords           C.1–C.6        [ ] pass  [ ] fail: ______________
 
 Musical judgement (not pass/fail — opinions wanted):
-  Do the seed zones sound useful? ________________________________
+  Do the six STYLE positions sound useful? _______________________
   Is DENSITY's response musical?  ________________________________
   Is the scale list the right 12? ________________________________
-  Is the BASS zone convincingly acid? ____________________________
+  Is the BASS style convincingly acid? ___________________________
   Are the 303 shaping rates right (runs, ties, octave jumps)? ____
   Is 1–200% the right GATE range? _________________________________
   Does ACCENT give the right amount of contrast? _________________
@@ -583,9 +574,10 @@ Musical judgement (not pass/fail — opinions wanted):
   Anything that feels wrong to play? _____________________________
 ```
 
-**Reporting a failure:** give the test ID, the knob settings, the seed
-(GROUP/SUBGROUP), and what you heard or measured instead. Seed + knobs is
-enough to reproduce anything this module does.
+**Reporting a failure:** give the test ID, the knob settings, and what you
+heard or measured instead — and **attach the saved patch**. Since item 16 the
+pattern lives in the patch file, not on the knobs, so the patch is what
+reproduces it.
 
 ---
 
@@ -594,8 +586,8 @@ enough to reproduce anything this module does.
 - A new task ships → give it a numbered **[NOW]** part with real test IDs.
 - The automated harness grows → move the covered rows *out* of here. Anything
   a test in `tests/` proves shouldn't burn human attention.
-- The generator changes → regenerate §6.5's reference table; stale numbers are
-  worse than none.
+- The generator changes → `tests/refgen.cc` still prints example rows; §6.5
+  no longer pins numbers, since a roll cannot be dialled up on the module.
 - Per-task Claude/user split lives in [DESIGN.md](DESIGN.md) § Per-task test
   plan; task status lives in § Implementation status.
 - After any change here, run `python3 tools/build_test_bench.py` and republish

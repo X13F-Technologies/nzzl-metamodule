@@ -4,6 +4,8 @@
 #include "engine.hh"
 #include "cv.hh"
 #include "display.hh"
+#include "roll.hh"
+#include <vector>
 
 #ifdef NZZL_METAMODULE
 #include <metamodule/VCVTextDisplay.hpp>
@@ -16,8 +18,10 @@ using namespace rack;
 
 struct NZZL : engine::Module {
     enum ParamId {
-        GROUP_PARAM,
-        SUBGROUP_PARAM,
+        // Item 16: STYLE takes GROUP's slot. SUBGROUP's slot is held for
+        // PITCH LENGTH (item 7), so the other params keep their ids.
+        STYLE_PARAM,
+        PITCH_LENGTH_RESERVED_PARAM,
         DENSITY_PARAM,
         LENGTH_PARAM,
         CLOCK_DIV_PARAM,
@@ -40,7 +44,7 @@ struct NZZL : engine::Module {
         RUN_INPUT,
         RESEED_INPUT,
         CV_SCALE_INPUT,
-        CV_SEED_INPUT,
+        CV_DENSITY_INPUT,     // was CV SEED (item 16)
         CV_ROOT_INPUT,
         CV_SLIDE_INPUT,
         INPUTS_LEN
@@ -56,18 +60,19 @@ struct NZZL : engine::Module {
     // MetaModule text displays are addressed by light id, and there are no
     // real lights on this panel, so the display ids start at zero.
     enum LightId {
-        SEED_DISPLAY,
-        ZONE_DISPLAY,
+        STEPS_DISPLAY,        // "8/16": density / length
+        STYLE_DISPLAY,
         SCALE_DISPLAY,
         LIGHTS_LEN
     };
 
-    nzzl::Pattern pattern = {};
-    nzzl::Engine   engine;
+    nzzl::RollPlayer player;     // the roll, and which row is playing
+    nzzl::Engine     engine;
 
-    int seedIndex     = -1;      // effective seed (knobs + CV SEED)
-    int pendingSeed   = -1;      // waiting for the loop to wrap
     dsp::SchmittTrigger randomButton;
+    int displayDensity = 8;
+    int displayLength  = 16;
+    int displayStyle   = nzzl::STYLE_POS_BASS;
     int displayScale  = nzzl::SCALE_NAT_MINOR;
     int displayRoot   = 0;
     float reseedFlash = 0.f;     // seconds remaining on the display indicator
@@ -75,8 +80,11 @@ struct NZZL : engine::Module {
     NZZL() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
 
-        configParam(GROUP_PARAM,       1.f, 32.f, 1.f,  "Group");
-        configParam(SUBGROUP_PARAM,    1.f, 32.f, 1.f,  "Subgroup");
+        // Six detented positions, one row of the roll each. No CV.
+        configSwitch(STYLE_PARAM, 0.f, float(nzzl::NUM_STYLES - 1),
+            float(nzzl::STYLE_POS_BASS), "Style",
+            {"Bass (303)", "Random", "Arp up", "Arp down", "Arp up-down",
+             "Arp down-up"});
         configParam(DENSITY_PARAM,     1.f, 16.f, 8.f,  "Density");
         configParam(LENGTH_PARAM,      2.f, 16.f, 16.f, "Length", " steps");
         configParam(CLOCK_DIV_PARAM,   1.f, 16.f, 1.f,  "Clock Divide", "÷");
@@ -99,7 +107,7 @@ struct NZZL : engine::Module {
                     " degrees");
         configParam(SHIFT_PARAM, -8.f, 8.f, 0.f, "Shift", " steps");
         configParam(SWING_PARAM, 0.f, 100.f, 0.f, "Swing", "%");
-        configButton(RANDOM_PARAM, "Random seed");
+        configButton(RANDOM_PARAM, "Generate (roll a new pattern)");
         getParamQuantity(PITCH_OFFSET_PARAM)->snapEnabled = true;
         getParamQuantity(SHIFT_PARAM)->snapEnabled = true;
         // GATE scales the pattern's three note lengths together. Past 100%
@@ -108,8 +116,6 @@ struct NZZL : engine::Module {
         // ACCENT scales the contrast between the three velocity layers.
         configParam(ACCENT_PARAM, 0.f, 100.f, 100.f, "Accent", "%");
 
-        getParamQuantity(GROUP_PARAM)->snapEnabled      = true;
-        getParamQuantity(SUBGROUP_PARAM)->snapEnabled   = true;
         getParamQuantity(DENSITY_PARAM)->snapEnabled    = true;
         getParamQuantity(LENGTH_PARAM)->snapEnabled     = true;
         getParamQuantity(CLOCK_DIV_PARAM)->snapEnabled  = true;
@@ -117,61 +123,52 @@ struct NZZL : engine::Module {
 
         configInput(CLOCK_INPUT,    "Clock");
         configInput(RUN_INPUT,      "Run (trigger toggles)");
-        configInput(RESEED_INPUT,   "Reseed / random seed (trigger)");
+        configInput(RESEED_INPUT,   "Reseed / generate (trigger)");
         configInput(CV_SCALE_INPUT, "CV Scale (override, 0-10V spans the list)");
-        configInput(CV_SEED_INPUT,  "CV Seed (offset, 10V spans all 1024)");
+        configInput(CV_DENSITY_INPUT, "CV Density (offset, 10V spans 1-16)");
         configInput(CV_ROOT_INPUT,  "CV Root (override, V/oct)");
-        configInput(CV_SLIDE_INPUT, "CV Slide (summed with the seed's slide)");
+        configInput(CV_SLIDE_INPUT, "CV Slide (summed with the step's slide)");
 
         configOutput(CV_PITCH_OUTPUT, "CV Pitch");
         configOutput(GATE_OUTPUT,     "Gate");
         configOutput(VELOCITY_OUTPUT, "Velocity");
+
+        // A freshly placed module needs something to play: roll once. A
+        // loaded patch then replaces this with its saved roll.
+        generate(false);
     }
 
-    // The one non-deterministic moment in the module, and only on a trigger
-    // or a button press.
-    void reseed() {
-        const int idx = int(random::u32() % uint32_t(nzzl::NUM_SEEDS));
-        int group = 1, subgroup = 1;
-        nzzl::seedKnobsFor(idx, group, subgroup);
-        // Drive the knobs to match, so the new pattern stays reproducible by
-        // hand — a seed you can hear but not dial in would be a dead end.
-        params[GROUP_PARAM].setValue(float(group));
-        params[SUBGROUP_PARAM].setValue(float(subgroup));
-        reseedFlash = 0.35f;     // brief display indicator, per the spec
+    // Generate — the one non-deterministic moment in the module, and only on
+    // a RESEED trigger, the RANDOM button, or a new module being placed.
+    // Everything after the draw is the pure, harness-tested roll.
+    void generate(bool flash = true) {
+        nzzl::RollEntropy e;
+        for (int i = 0; i < nzzl::NUM_LANES; i++)
+            e.lane[i] = random::u32();
+        player.generate(e);
+        if (flash)
+            reseedFlash = 0.35f;     // brief display indicator, per the spec
     }
 
     void process(const ProcessArgs& args) override {
-        if (engine.reseedRequested) {
-            engine.reseedRequested = false;
-            reseed();
+        if (engine.generateRequested) {
+            engine.generateRequested = false;
+            generate();
         }
         // The RANDOM button does exactly what the RESEED jack does.
         if (randomButton.process(params[RANDOM_PARAM].getValue(), 0.1f, 0.5f))
-            reseed();
+            generate();
         if (reseedFlash > 0.f) reseedFlash -= args.sampleTime;
 
-        const int group    = (int)std::round(params[GROUP_PARAM].getValue());
-        const int subgroup = (int)std::round(params[SUBGROUP_PARAM].getValue());
-        const int knobSeed = nzzl::seedIndexFor(group, subgroup);
-
-        const int effectiveSeed = nzzl::applySeedCv(
-            knobSeed,
-            inputs[CV_SEED_INPUT].getVoltage(),
-            inputs[CV_SEED_INPUT].isConnected());
-
-        // A new seed waits for the loop to wrap, so a pattern always starts
-        // from its own step 1 instead of dropping in mid-phrase.
-        if (effectiveSeed != seedIndex && effectiveSeed != pendingSeed)
-            pendingSeed = effectiveSeed;
-        if (pendingSeed >= 0 && (seedIndex < 0 || engine.loopWrapped)) {
-            seedIndex   = pendingSeed;
-            pendingSeed = -1;
-            nzzl::generatePattern(seedIndex, pattern);
-        }
+        // A new roll or STYLE position waits for the loop to wrap (roll.hh).
+        const int style = (int)std::round(params[STYLE_PARAM].getValue());
+        player.update(style, engine.loopWrapped);
 
         nzzl::EngineParams p;
-        p.density  = (int)std::round(params[DENSITY_PARAM].getValue());
+        p.density  = nzzl::applyDensityCv(
+            (int)std::round(params[DENSITY_PARAM].getValue()),
+            inputs[CV_DENSITY_INPUT].getVoltage(),
+            inputs[CV_DENSITY_INPUT].isConnected());
         p.length   = (int)std::round(params[LENGTH_PARAM].getValue());
         p.clockDiv = (int)std::round(params[CLOCK_DIV_PARAM].getValue());
         p.slideKnob = params[SLIDE_PARAM].getValue();
@@ -196,8 +193,11 @@ struct NZZL : engine::Module {
             inputs[CV_ROOT_INPUT].getVoltage(),
             inputs[CV_ROOT_INPUT].isConnected());
 
-        displayScale = p.quant.scaleIndex;
-        displayRoot  = p.quant.root;
+        displayScale   = p.quant.scaleIndex;
+        displayRoot    = p.quant.root;
+        displayDensity = p.density;
+        displayLength  = p.length;
+        displayStyle   = player.style < 0 ? style : player.style;
 
         nzzl::EngineInputs in;
         in.clock           = inputs[CLOCK_INPUT].getVoltage();
@@ -207,32 +207,42 @@ struct NZZL : engine::Module {
         in.reseedConnected = inputs[RESEED_INPUT].isConnected();
 
         const nzzl::EngineOutputs out =
-            engine.process(args.sampleTime, in, pattern, p);
+            engine.process(args.sampleTime, in, player.current, p);
 
         outputs[CV_PITCH_OUTPUT].setVoltage(out.pitch);
         outputs[GATE_OUTPUT].setVoltage(out.gate);
         outputs[VELOCITY_OUTPUT].setVoltage(out.velocity);
     }
 
-    // Task 12. The seed itself rides on the GROUP/SUBGROUP params, which Rack
-    // saves for us — including after a RESEED, because reseed() writes the
-    // knobs rather than shadowing them. What is saved here is the state that
-    // is NOT a param: whether RUN has stopped playback.
+    // Patch state. Item 16: the whole roll is saved — every row, not just
+    // the one STYLE points at — so a reloaded patch plays what you heard and
+    // the STYLE knob still behaves the same. A pending Generate is saved as
+    // the roll, since that is what was about to play. Plus the run state.
     //
     // The step position is deliberately NOT saved: a reloaded patch should
     // start from a predictable place rather than halfway through a phrase.
     json_t* dataToJson() override {
         json_t* rootJ = json_object();
         json_object_set_new(rootJ, "running", json_boolean(engine.running));
-        // Informational, and a safety net if a future version stops deriving
-        // the seed from the knobs.
-        json_object_set_new(rootJ, "seedIndex", json_integer(seedIndex));
+        std::vector<char> hex(nzzl::ROLL_HEX_LEN + 1);
+        nzzl::encodeRoll(player.newest(), hex.data());
+        json_object_set_new(rootJ, "rollFormat", json_integer(nzzl::ROLL_FORMAT));
+        json_object_set_new(rootJ, "roll", json_string(hex.data()));
         return rootJ;
     }
 
     void dataFromJson(json_t* rootJ) override {
         if (json_t* r = json_object_get(rootJ, "running"))
             engine.running = json_boolean_value(r);
+        // A patch from before item 16, or a malformed roll, keeps the fresh
+        // roll the constructor made. Breaking test-era patches is accepted.
+        json_t* fmt  = json_object_get(rootJ, "rollFormat");
+        json_t* roll = json_object_get(rootJ, "roll");
+        if (fmt && roll && json_integer_value(fmt) == nzzl::ROLL_FORMAT) {
+            nzzl::Roll loaded;
+            if (nzzl::decodeRoll(json_string_value(roll), loaded))
+                player.load(loaded);
+        }
     }
 };
 
@@ -248,7 +258,7 @@ using NZZLDisplayBase = app::LightWidget;
 
 struct NZZLDisplay : NZZLDisplayBase {
     NZZL* module = nullptr;
-    int   line   = 0;          // 0 = seed, 1 = zone, 2 = scale/root
+    int   line   = 0;          // 0 = density/length, 1 = style, 2 = root/scale
     float fontSize = 13.f;
 
     // Deliberately draw() rather than drawLayer(): drawLayer is a Rack-only
@@ -257,12 +267,13 @@ struct NZZLDisplay : NZZLDisplayBase {
     void draw(const DrawArgs& args) override {
         nzzl::DisplayText d;
         if (module)
-            nzzl::buildDisplay(module->seedIndex < 0 ? 0 : module->seedIndex,
-                               module->displayScale, module->displayRoot, d);
+            nzzl::buildDisplay(module->displayDensity, module->displayLength,
+                               module->displayStyle, module->displayScale,
+                               module->displayRoot, d);
         else
-            nzzl::buildDisplay(0, 3, 0, d);      // browser preview
+            nzzl::buildDisplay(8, 16, nzzl::STYLE_POS_BASS, 3, 0, d);   // browser preview
 
-        const char* text = (line == 0) ? d.seed : (line == 1) ? d.zone : d.scale;
+        const char* text = (line == 0) ? d.steps : (line == 1) ? d.style : d.scale;
         const bool flash = module && module->reseedFlash > 0.f;
 
 #ifndef NZZL_METAMODULE
@@ -365,8 +376,8 @@ struct NZZLWidget : app::ModuleWidget {
         addLabel(math::Vec(box.size.x * 0.5f, 6.f), "N Z Z L", 16.f);
 
         // ── Display ──────────────────────────────────────────────────────────
-        addDisplayLine(math::Vec(12.f, 26.f), module, 0, NZZL::SEED_DISPLAY);
-        addDisplayLine(math::Vec(92.f, 26.f), module, 1, NZZL::ZONE_DISPLAY);
+        addDisplayLine(math::Vec(12.f, 26.f), module, 0, NZZL::STEPS_DISPLAY);
+        addDisplayLine(math::Vec(92.f, 26.f), module, 1, NZZL::STYLE_DISPLAY);
         addDisplayLine(math::Vec(12.f, 42.f), module, 2, NZZL::SCALE_DISPLAY);
 
         // ── Controls (left two columns) ──────────────────────────────────────
@@ -374,8 +385,8 @@ struct NZZLWidget : app::ModuleWidget {
         float y = 72.f;
         const float dy = 38.f;
 
-        addKnobWithLabel(math::Vec(cx1, y), module, NZZL::GROUP_PARAM,    "GROUP");
-        addKnobWithLabel(math::Vec(cx2, y), module, NZZL::SUBGROUP_PARAM, "SUBGRP");
+        addKnobWithLabel(math::Vec(cx1, y), module, NZZL::STYLE_PARAM,    "STYLE");
+        // (cx2, y) is held for PITCH LENGTH, item 7.
         y += dy;
         addKnobWithLabel(math::Vec(cx1, y), module, NZZL::DENSITY_PARAM,  "DENSITY");
         addKnobWithLabel(math::Vec(cx2, y), module, NZZL::LENGTH_PARAM,   "LENGTH");
@@ -409,7 +420,7 @@ struct NZZLWidget : app::ModuleWidget {
         addInputWithLabel(math::Vec(jx2, jy), module, NZZL::RUN_INPUT,    "RUN");
         jy += jdy;
         addInputWithLabel(math::Vec(jx1, jy), module, NZZL::RESEED_INPUT,   "RESEED");
-        addInputWithLabel(math::Vec(jx2, jy), module, NZZL::CV_SEED_INPUT,  "cvSEED");
+        addInputWithLabel(math::Vec(jx2, jy), module, NZZL::CV_DENSITY_INPUT, "cvDENS");
         jy += jdy;
         addInputWithLabel(math::Vec(jx1, jy), module, NZZL::CV_SCALE_INPUT, "cvSCALE");
         addInputWithLabel(math::Vec(jx2, jy), module, NZZL::CV_ROOT_INPUT,  "cvROOT");

@@ -1,10 +1,14 @@
-// Native test harness for NZZL's pure logic — no Rack/MetaModule deps.
+// Native test harness for NZZL's pattern generation — no Rack/MetaModule deps.
+// Item 16: there are no seeds. These are properties of a roll, checked over
+// NUM_ROLLS reproducible rolls (tests/rolls.hh) and every STYLE row of each.
 // Build & run:  ./tests/run_tests.sh
 
 #include "../src/pattern.hh"
+#include "rolls.hh"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <initializer_list>
 
 static int failures = 0;
 
@@ -20,116 +24,169 @@ static int failures = 0;
 
 using namespace nzzl;
 
-// Same seed always produces identical patterns
-static void test_determinism() {
-    for (int seed = 0; seed < 1024; seed++) {
-        Pattern pa, pb;
-        generatePattern(seed, pa);
-        generatePattern(seed, pb);
-        StepData *a = pa.steps, *b = pb.steps;
-        // field-wise compare (memcmp would read struct padding bytes)
-        for (int i = 0; i < MAX_STEPS; i++) {
-            bool same = a[i].weight == b[i].weight
-                     && a[i].pitchIndex == b[i].pitchIndex
-                     && a[i].gateIndex == b[i].gateIndex
-                     && a[i].velLayer == b[i].velLayer
-                     && a[i].slide == b[i].slide
-                     && a[i].octaveJump == b[i].octaveJump
-                     && a[i].octaveRaw == b[i].octaveRaw;
-            CHECK(same, "seed %d step %d not deterministic", seed, i);
-        }
+using namespace nzzl_test;
+
+// The roll is pure given its entropy: the only randomness is the draw at
+// Generate. Same entropy -> identical roll, every row.
+static void test_roll_is_pure() {
+    for (int k = 0; k < NUM_ROLLS; k++) {
+        Roll a, b;
+        rollFor(k, a);
+        rollFor(k, b);
+        for (int r = 0; r < NUM_STYLES; r++)
+            CHECK(samePattern(a.rows[r], b.rows[r]),
+                  "roll %d row %d: same entropy gave a different pattern", k, r);
     }
-    printf("determinism: all 1024 seeds OK\n");
+    printf("roll purity: same entropy -> identical rows, %d rolls\n", NUM_ROLLS);
 }
 
-// Weights are a permutation of 1..16 => density N activates exactly N steps
-static void test_density_exact() {
-    for (int seed = 0; seed < 1024; seed++) {
-        Pattern pat; generatePattern(seed, pat); StepData* s = pat.steps;
-        bool seen[MAX_STEPS + 1] = {};
-        for (int i = 0; i < MAX_STEPS; i++) {
-            CHECK(s[i].weight >= 1 && s[i].weight <= 16,
-                  "seed %d step %d weight %d out of range", seed, i, s[i].weight);
-            CHECK(!seen[s[i].weight],
-                  "seed %d duplicate weight %d", seed, s[i].weight);
-            seen[s[i].weight] = true;
-        }
-        for (int density = 1; density <= 16; density++) {
-            int active = 0;
-            for (int i = 0; i < MAX_STEPS; i++)
-                if (s[i].weight <= density)
-                    active++;
-            CHECK(active == density,
-                  "seed %d density %d activates %d steps", seed, density, active);
+// One shuffled order per row => density N activates exactly N steps, and
+// turning DENSITY up only ever adds steps (nested). Checked at every LENGTH
+// and SHIFT too, since stepActive ranks within the loop window.
+static void test_density_exact_and_nested() {
+    long checked = 0;
+    for (int k = 0; k < NUM_ROLLS; k++) {
+        Roll roll; rollFor(k, roll);
+        for (int r = 0; r < NUM_STYLES; r++) {
+            const Pattern& pat = roll.rows[r];
+            const StepData* s = pat.steps;
+            bool seen[MAX_STEPS + 1] = {};
+            for (int i = 0; i < MAX_STEPS; i++) {
+                CHECK(s[i].weight >= 1 && s[i].weight <= 16,
+                      "roll %d row %d step %d weight %d out of range", k, r, i, s[i].weight);
+                CHECK(!seen[s[i].weight],
+                      "roll %d row %d duplicate weight %d", k, r, s[i].weight);
+                seen[s[i].weight] = true;
+            }
+            // a sample of lengths/shifts per row keeps the run time sane
+            const int length = 2 + (k + r) % 15;
+            const int shift  = (k * 7 + r) % 17 - 8;
+            for (int len : {16, length}) {
+                bool prev[MAX_STEPS] = {};
+                for (int d = 1; d <= len; d++) {
+                    int n = 0;
+                    for (int i = 0; i < len; i++) {
+                        const bool on = stepActive(pat, i, len, d, shift);
+                        if (on) n++;
+                        CHECK(!prev[i] || on,
+                              "roll %d row %d len %d: step %d dropped out at density %d",
+                              k, r, len, i, d);
+                        prev[i] = on;
+                    }
+                    CHECK(n == d, "roll %d row %d len %d density %d: %d steps active",
+                          k, r, len, d, n);
+                    checked++;
+                }
+            }
         }
     }
-    printf("density: exactly N steps active at density N, all seeds OK\n");
+    printf("density: exact and nested in every row of %d rolls (%ld cases)\n",
+           NUM_ROLLS, checked);
 }
 
-// Adjacent seeds must produce meaningfully different patterns
-static void test_seed_distinctness() {
-    int identicalNeighbors = 0;
-    for (int seed = 0; seed < 1023; seed++) {
-        Pattern pa, pb;
-        generatePattern(seed, pa);
-        generatePattern(seed + 1, pb);
-        StepData *a = pa.steps, *b = pb.steps;
+// Successive Generates must give genuinely different patterns.
+static void test_rolls_differ() {
+    int nearIdentical = 0;
+    for (int k = 0; k + 1 < NUM_ROLLS; k++) {
+        Pattern a, b;
+        patternFor(k, STYLE_POS_RAND, a);
+        patternFor(k + 1, STYLE_POS_RAND, b);
         int samePitch = 0, sameWeight = 0;
         for (int i = 0; i < MAX_STEPS; i++) {
-            if (a[i].pitchIndex == b[i].pitchIndex) samePitch++;
-            if (a[i].weight == b[i].weight) sameWeight++;
+            if (a.steps[i].pitchIndex == b.steps[i].pitchIndex) samePitch++;
+            if (a.steps[i].weight == b.steps[i].weight) sameWeight++;
         }
-        // Random chance: pitch matches ~1/16 per step => ~1 of 16.
-        // Flag near-identical neighbors (>= 12 of 16 matching).
+        // Chance is ~1 in 16 per step; >= 12 of 16 matching means a bug.
         if (samePitch >= 12 && sameWeight >= 12)
-            identicalNeighbors++;
+            nearIdentical++;
     }
-    CHECK(identicalNeighbors == 0,
-          "%d adjacent seed pairs are near-identical", identicalNeighbors);
-    printf("seed distinctness: no near-identical adjacent seeds\n");
+    CHECK(nearIdentical == 0, "%d successive rolls are near-identical", nearIdentical);
+    printf("roll variety: no two successive rolls near-identical\n");
 }
 
-// Value ranges
+// Value ranges, every row of every roll.
 static void test_ranges() {
-    for (int seed = 0; seed < 1024; seed++) {
-        Pattern pat; generatePattern(seed, pat); StepData* s = pat.steps;
-        for (int g = 0; g < NUM_GATE_LENGTHS; g++)
-            CHECK(pat.gateLengths[g] > 0.f && pat.gateLengths[g] <= 1.f,
-                  "seed %d gateLength[%d] = %f", seed, g, pat.gateLengths[g]);
-        CHECK(pat.gateLengths[0] < pat.gateLengths[1]
-           && pat.gateLengths[1] < pat.gateLengths[2],
-              "seed %d gate lengths not short<mid<long", seed);
-        for (int i = 0; i < MAX_STEPS; i++) {
-            CHECK(s[i].pitchIndex >= 0 && s[i].pitchIndex < 16,
-                  "seed %d pitchIndex %d", seed, s[i].pitchIndex);
-            CHECK(s[i].gateIndex >= 0 && s[i].gateIndex < NUM_GATE_LENGTHS,
-                  "seed %d gateIndex %d", seed, s[i].gateIndex);
-            CHECK(s[i].velLayer >= 0 && s[i].velLayer < NUM_VEL_LAYERS,
-                  "seed %d velLayer %d", seed, s[i].velLayer);
-            CHECK(s[i].octaveJump >= -1 && s[i].octaveJump <= 4,
-                  "seed %d octaveJump %d", seed, s[i].octaveJump);
-            CHECK(s[i].octaveRaw >= 0.f && s[i].octaveRaw < 1.f,
-                  "seed %d octaveRaw %f", seed, s[i].octaveRaw);
+    for (int k = 0; k < NUM_ROLLS; k++) {
+        Roll roll; rollFor(k, roll);
+        for (int r = 0; r < NUM_STYLES; r++) {
+            const Pattern& pat = roll.rows[r];
+            const StepData* s = pat.steps;
+            for (int g = 0; g < NUM_GATE_LENGTHS; g++)
+                CHECK(pat.gateLengths[g] > 0.f && pat.gateLengths[g] <= 1.f,
+                      "roll %d row %d gateLength[%d] = %f", k, r, g, pat.gateLengths[g]);
+            CHECK(pat.gateLengths[0] < pat.gateLengths[1]
+               && pat.gateLengths[1] < pat.gateLengths[2],
+                  "roll %d row %d gate lengths not short<mid<long", k, r);
+            CHECK(pat.swing >= 0.f && pat.swing <= 1.f, "roll %d swing %f", k, pat.swing);
+            for (int i = 0; i < MAX_STEPS; i++) {
+                CHECK(s[i].pitchIndex >= 0 && s[i].pitchIndex < 16,
+                      "roll %d row %d pitchIndex %d", k, r, s[i].pitchIndex);
+                CHECK(s[i].gateIndex >= 0 && s[i].gateIndex < NUM_GATE_LENGTHS,
+                      "roll %d row %d gateIndex %d", k, r, s[i].gateIndex);
+                CHECK(s[i].velLayer >= 0 && s[i].velLayer < NUM_VEL_LAYERS,
+                      "roll %d row %d velLayer %d", k, r, s[i].velLayer);
+                CHECK(s[i].octaveJump >= -1 && s[i].octaveJump <= 4,
+                      "roll %d row %d octaveJump %d", k, r, s[i].octaveJump);
+                CHECK(s[i].octaveRaw >= 0.f && s[i].octaveRaw < 1.f,
+                      "roll %d row %d octaveRaw %f", k, r, s[i].octaveRaw);
+            }
         }
     }
-    printf("ranges: all attributes in bounds, all seeds OK\n");
+    printf("ranges: all attributes in bounds, every row of %d rolls\n", NUM_ROLLS);
 }
 
-// Attribute independence: pitch stream must not depend on how many
-// draws the weight stream makes (guards patch stability across versions)
-static void test_attribute_isolation() {
-    Pattern pat;
-    // The base generator is what owns stream isolation; the style layer
-    // deliberately rewrites some attributes afterwards from its own salt.
-    generateBasePattern(42, pat);
-    StepData* s = pat.steps;
-    auto rng = attrRng(42, SALT_PITCH);
-    for (int i = 0; i < MAX_STEPS; i++) {
-        int expected = rng.nextInt(16);
-        CHECK(s[i].pitchIndex == expected,
-              "pitch stream not independent at step %d", i);
+// Lanes draw independently within a roll: changing one lane's entropy
+// changes only that lane's attribute in the RAND (base) row.
+static void test_lanes_independent() {
+    for (int k = 0; k < 64; k++) {
+        RollEntropy e = entropyFor(k);
+        Pattern a; generateBasePattern(e, a);
+        e.lane[LANE_PITCH] ^= 0x5A5A1234u;
+        Pattern b; generateBasePattern(e, b);
+        int pitchDiffs = 0;
+        for (int i = 0; i < MAX_STEPS; i++) {
+            const StepData& x = a.steps[i];
+            const StepData& y = b.steps[i];
+            if (x.pitchIndex != y.pitchIndex) pitchDiffs++;
+            CHECK(x.weight == y.weight && x.gateIndex == y.gateIndex
+               && x.velLayer == y.velLayer && x.slide == y.slide
+               && x.octaveRaw == y.octaveRaw,
+                  "roll %d step %d: re-rolling pitch disturbed another lane", k, i);
+        }
+        CHECK(pitchDiffs > 0, "roll %d: re-rolling the pitch lane changed nothing", k);
+        for (int g = 0; g < NUM_GATE_LENGTHS; g++)
+            CHECK(a.gateLengths[g] == b.gateLengths[g],
+                  "roll %d: re-rolling pitch moved gate length %d", k, g);
+        CHECK(a.swing == b.swing, "roll %d: re-rolling pitch moved swing", k);
     }
-    printf("attribute isolation: pitch stream independent of other attrs\n");
+    printf("lane independence: re-rolling one lane leaves every other lane alone\n");
+}
+
+// The rows of one roll are built from one base: RAND is the base itself, and
+// the ARP rows reorder its pitches without changing which steps play.
+static void test_rows_share_a_base() {
+    for (int k = 0; k < NUM_ROLLS; k++) {
+        const RollEntropy e = entropyFor(k);
+        Pattern base; generateBasePattern(e, base);
+        Roll roll; rollPatterns(e, roll);
+        CHECK(samePattern(base, roll.rows[STYLE_POS_RAND]),
+              "roll %d: RAND row is not the base pattern", k);
+
+        int baseCount[16] = {};
+        for (int i = 0; i < MAX_STEPS; i++) baseCount[base.steps[i].pitchIndex]++;
+        for (int r = STYLE_POS_ARP_UP; r <= STYLE_POS_ARP_DOWNUP; r++) {
+            int c[16] = {};
+            for (int i = 0; i < MAX_STEPS; i++) {
+                c[roll.rows[r].steps[i].pitchIndex]++;
+                CHECK(roll.rows[r].steps[i].weight == base.steps[i].weight,
+                      "roll %d row %d: arp changed the rhythm", k, r);
+            }
+            for (int p = 0; p < 16; p++)
+                CHECK(c[p] == baseCount[p],
+                      "roll %d row %d: arp changed the set of pitches", k, r);
+        }
+    }
+    printf("rows: RAND is the base, ARP rows reorder its notes, %d rolls\n", NUM_ROLLS);
 }
 
 // ACCENT flattens or spreads the three velocity layers.
@@ -155,12 +212,13 @@ static void test_accent_scaling() {
 }
 
 int main() {
-    test_determinism();
+    test_roll_is_pure();
     test_accent_scaling();
-    test_density_exact();
-    test_seed_distinctness();
+    test_density_exact_and_nested();
+    test_rolls_differ();
     test_ranges();
-    test_attribute_isolation();
+    test_lanes_independent();
+    test_rows_share_a_base();
 
     if (failures) {
         printf("\n%d FAILURES\n", failures);
