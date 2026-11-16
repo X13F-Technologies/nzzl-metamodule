@@ -684,7 +684,7 @@ random at playback, existing RNG streams untouched, new seed-derived values
 on **new salts**, and every new control default-off so existing patches play
 exactly as before.
 
-#### 7. Separate pitch lane — **agreed 2026-11-13, next to build**
+#### 7. Separate pitch lane — **agreed 2026-11-13; builds after item 16 (decided 2026-11-16)**
 
 **The gap.** `advanceStep` reads pitch from the same step as the rhythm, so
 turning DENSITY up changes *which pitches* play as well as how many notes.
@@ -697,12 +697,16 @@ fewer hits. An optional **PITCH LENGTH** (separate from LENGTH, 0 = linked)
 wraps that counter at its own length, giving polymeter: e.g. 5 pitches
 cycling over a 16-step rhythm. Slide and octave go with the pitch.
 
-**To settle when building.** Whether "advance per note" becomes the new
-default (it changes every existing patch's sound, so probably opt-in), what
-resets the pitch counter (loop wrap, seed change, RUN), and how SHIFT applies
-to it.
+**Decided 2026-11-16.** Advance-per-note is **the default and always on**,
+with no switch: breaking test-era patches is accepted (item 16).
+**PITCH LENGTH takes one of the two panel positions freed by GROUP /
+SUBGROUP**; 0 = linked to LENGTH, 1–16 = wraps on its own. It is built on the
+roll (its own lane), after item 16, not on the seed system.
 
-#### 8. Generative evolve — **agreed in principle 2026-11-13, design to discuss**
+**Still to settle when building.** What resets the pitch counter (loop wrap,
+Generate, RUN) and how SHIFT applies to it.
+
+#### 8. Generative evolve — **agreed in principle 2026-11-13; deferred 2026-11-16**
 
 TGB applies **one small mutation every N bars** (one stage's pitch, or its
 mode / length / divider / gate). For NZZL it would have to be deterministic:
@@ -712,6 +716,12 @@ deliberately does not save the step position, so drift restarts on reload;
 whether that is fine, what the controls are (rate, what may mutate), and
 whether a reseed or RUN resets it. Gerardo wants to discuss the design when
 this is implemented.
+
+**Deferred 2026-11-16.** The seed-and-loop-count keying above no longer
+works once item 16 removes seeds. Evolve waits until items 16 and 7 are
+built and gets its own design conversation then. One candidate that keeps
+"no randomness at playback": Generate also rolls a list of upcoming small
+changes, saved with the roll.
 
 #### 9. NOTES knob — a nested cap on distinct pitches
 
@@ -856,8 +866,14 @@ patches made during testing is accepted.
   2026-11-13). It selects BASS / RAND / ARP and the arp directions, as a knob
   or a menu selector. It does **not** need a CV input: Gerardo does not expect
   to modulate style. The freed panel position is open.
-- **CV SEED goes.** What replaces it on that jack is open.
-- **Display line 1** (group . subgroup) needs new content.
+- **STYLE is a panel knob** (decided 2026-11-16) with six detented
+  positions: BASS, RAND, ARP↑, ARP↓, ARP↕, ARP↔. It takes one of the two
+  positions GROUP and SUBGROUP free; **PITCH LENGTH** (item 7) takes the other.
+- **CV SEED becomes CV DENSITY** (decided 2026-11-16): an **offset** added to
+  the DENSITY knob, 10 V = the full 1–16 range, clamped. Because DENSITY
+  nests, a CV sweep only adds or removes hits and never reshuffles them.
+- **Display line 1 shows density / length** (decided 2026-11-16): `8/16`,
+  and `8/16 P5` when PITCH LENGTH is set. Effective values, CV included.
 - **Hashed seeds and salted per-attribute streams go.** They existed so
   upgrades would not change saved seeds. Lanes still draw independently
   within a roll, so knobs on one lane never disturb another.
@@ -881,10 +897,15 @@ protect, it can simply become the rule.
 
 **Settled 2026-11-13: rules replace seeds** (item 16). Generate rolls a
 fresh pattern; knobs pick from rows precomputed at each roll. Also settled
-the same day: the rolled pattern is saved with the patch, and a STYLE knob or
-menu selector (no CV) replaces GROUP / SUBGROUP. Still open, to discuss
-later: what replaces CV SEED on its jack, what display line 1 shows, and what
-goes in the freed panel position.
+the same day: the rolled pattern is saved with the patch, and a STYLE
+control (no CV) replaces GROUP / SUBGROUP.
+
+**Settled 2026-11-16: the rest of item 16, and the order.** Build item 16
+first, then item 7 and item 15 on top of it. STYLE is a panel knob; PITCH
+LENGTH takes the other freed position; CV SEED becomes CV DENSITY (offset);
+display line 1 shows density / length. The pitch lane (item 7) is the
+default, always on. Evolve (item 8) is deferred to its own design
+conversation.
 
 **Settled 2026-09-21: SCALE LOCK stays folded into the SCALE knob.** The
 approach is confirmed; if it proves awkward in practice the switch can come
