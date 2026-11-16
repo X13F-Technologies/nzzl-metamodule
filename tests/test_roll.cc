@@ -7,11 +7,13 @@
 // rather than played.
 
 #include "../src/roll.hh"
+#include "../src/engine.hh"
 #include "rolls.hh"
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
+#include <initializer_list>
 
 static int failures = 0;
 
@@ -132,6 +134,100 @@ static void test_load_is_immediate() {
     printf("player: a patch load applies immediately and drops any pending Generate\n");
 }
 
+// ── player + engine together: a queued pattern starts on its own step 1 ────
+//
+// The bug this guards: the swap used to wait for Engine::loopWrapped, which
+// is raised on the sample step 1 FIRES — so step 1 of the first new loop
+// still played the old pattern and the new one was heard from step 2. Now
+// the swap happens during the old loop's last step (Engine::atLoopEnd).
+//
+// Two patterns told apart by velocity alone: "old" has every step on the
+// off layer (2.2 V), "new" every step on the accent layer (10 V). DENSITY 16
+// and SLIDE 0, so every step plays. The change is requested mid-loop; the
+// test records (step, velocity) every time a step fires. (Fires, not gate
+// edges: with swing, a delayed last step's gate can overlap step 1.)
+struct Onset { int step; float vel; };
+
+static int runSwap(bool viaStyle, int length, int clockDiv, float swing,
+                   Onset* log, int maxLog, int& requestedAt) {
+    Roll oldR; rollFor(21, oldR);
+    Roll newR = oldR;
+    for (int r = 0; r < NUM_STYLES; r++)
+        for (int i = 0; i < MAX_STEPS; i++) {
+            oldR.rows[r].steps[i].velLayer = 0;
+            newR.rows[r].steps[i].velLayer = 2;
+        }
+    // via STYLE: one roll, RAND quiet and ARP↑ loud
+    if (viaStyle)
+        oldR.rows[STYLE_POS_ARP_UP] = newR.rows[STYLE_POS_ARP_UP];
+
+    RollPlayer pl;
+    pl.load(oldR);
+    Engine e;
+    EngineParams p;
+    p.density = 16; p.length = length; p.clockDiv = clockDiv;
+    p.slideKnob = 0.f; p.gate = 1.f; p.accent = 1.f; p.swing = swing;
+
+    const float SR = 48000.f, dt = 1.f / SR, period = 0.05f;
+    float phase = 0.f;
+    int lastStep = -1;
+    bool lastStarted = false;
+    int n = 0, style = STYLE_POS_RAND;
+    requestedAt = -1;
+    int onsets = 0;
+    for (int i = 0; i < int(SR * period * clockDiv * 3 * MAX_STEPS) && n < maxLog; i++) {
+        phase += dt; if (phase >= period) phase -= period;
+        EngineInputs in;
+        in.clock = phase < period * 0.5f ? 10.f : 0.f;
+        pl.update(style, e.atLoopEnd);
+        const EngineOutputs o = e.process(dt, in, pl.current, p);
+        const bool fired = e.started && (!lastStarted || e.step != lastStep);
+        lastStarted = e.started;
+        lastStep = e.step;
+        if (fired) {
+            log[n++] = { e.step, o.velocity };
+            // request the change halfway through the first loop
+            if (++onsets == length / 2 + 1 && requestedAt < 0) {
+                requestedAt = n - 1;
+                if (viaStyle) style = STYLE_POS_ARP_UP;
+                else { pl.pending = newR; pl.hasPending = true; }
+            }
+        }
+    }
+    return n;
+}
+
+static void test_queued_pattern_starts_on_step_one() {
+    int cases = 0;
+    for (int via = 0; via < 2; via++)
+        for (int length : {16, 8, 7, 3})
+            for (int div : {1, 3})
+                for (float swing : {0.f, 1.f}) {
+                    Onset log[64]; int req = -1;
+                    const int n = runSwap(via == 1, length, div, swing, log, 64, req);
+                    CHECK(req >= 0 && n > req + length + 1,
+                          "via %d len %d: run too short (%d onsets)", via, length, n);
+                    if (req < 0) continue;
+                    // the rest of the requesting loop: old pattern
+                    int k = req;
+                    for (; k < n && !(k > req && log[k].step == 0); k++)
+                        CHECK(log[k].vel < 5.f,
+                              "%s len %d div %d swing %.0f: step %d after the request "
+                              "played the NEW pattern before the loop ended",
+                              via ? "STYLE" : "Generate", length, div, swing, log[k].step + 1);
+                    // from the first step 0 after it: new pattern, step 1 included
+                    CHECK(k < n && log[k].step == 0, "no loop wrap observed");
+                    for (int j = k; j < n && j < k + length; j++)
+                        CHECK(log[j].vel > 9.f,
+                              "%s len %d div %d swing %.0f: step %d of the first new "
+                              "loop played the OLD pattern",
+                              via ? "STYLE" : "Generate", length, div, swing, log[j].step + 1);
+                    cases++;
+                }
+    printf("grid: a Generate or STYLE change starts on the new pattern's own step 1 "
+           "(%d cases: lengths, clock divides, swing)\n", cases);
+}
+
 // ── save / load ─────────────────────────────────────────────────────────────
 
 static void test_roundtrip() {
@@ -223,6 +319,7 @@ int main() {
     test_changes_land_on_the_wrap();
     test_generate_changes_the_pattern();
     test_load_is_immediate();
+    test_queued_pattern_starts_on_step_one();
     test_roundtrip();
     test_bad_saves_are_refused();
 

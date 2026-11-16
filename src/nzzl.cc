@@ -160,9 +160,10 @@ struct NZZL : engine::Module {
             generate();
         if (reseedFlash > 0.f) reseedFlash -= args.sampleTime;
 
-        // A new roll or STYLE position waits for the loop to wrap (roll.hh).
+        // A new roll or STYLE position waits for the loop's last step, so
+        // the new pattern's step 1 is the first thing heard (roll.hh).
         const int style = (int)std::round(params[STYLE_PARAM].getValue());
-        player.update(style, engine.loopWrapped);
+        player.update(style, engine.atLoopEnd);
 
         nzzl::EngineParams p;
         p.density  = nzzl::applyDensityCv(

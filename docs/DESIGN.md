@@ -219,7 +219,7 @@ user-tested:
 | 6 velocity | ✅ range test (done) | velocity varies per note, holds during silence |
 | 7 slide | ✅ done, in `engine.hh`: arrival exact, no overshoot, within one step, scales with knob and with tempo, slide=0 provably instantaneous | glide audible on flagged steps, SLIDE knob CCW kills it |
 | 8 styles | ✅ done, aggregate over the same STYLE row of 1024 rolls: bass run structure, downbeat and root bias, arp direction in every row, per-style gate distributions, RAND row = the unshaped base | styles sound distinct by ear |
-| 9 reseed → Generate | ✅ edge semantics in `engine.hh`; roll player: Generate and STYLE changes land on the wrap, STYLE returns the same row | trigger/button changes the pattern on the next loop |
+| 9 reseed → Generate | ✅ edge semantics in `engine.hh`; roll player: Generate and STYLE changes land on the wrap, STYLE returns the same row; engine + player together: the new pattern's own step 1 is the first note heard, across lengths, clock divides and swing | trigger/button changes the pattern on the next loop |
 | 10 CV inputs | ✅ done: every mapping's table, rounding, clamping and wrapping; unpatched is a no-op; a 14 000-point CV ROOT sweep never leaves the semitone grid; CV DENSITY clamped and monotonic | LFO into CV ROOT shifts key in tune; CV DENSITY adds/removes hits |
 | 11 display | ✅ text half done: every density × length renders `d/l`, every STYLE its label, root+scale, with clamping and truncation | display renders on hardware |
 | 12 patch save | ✅ the whole roll round-trips bit-exactly through the save format; damaged saves are refused | save/reload patch in Rack restores the exact pattern and run state |

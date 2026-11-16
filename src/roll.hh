@@ -13,10 +13,11 @@ namespace nzzl {
 
 // ── Which pattern is playing ────────────────────────────────────────────────
 //
-// A new roll and a STYLE change both wait for the loop to wrap, so a pattern
-// always starts on the grid instead of dropping in mid-phrase (item 6, kept).
-// Until the first pattern is chosen there is nothing playing, so that one is
-// taken at once.
+// A new roll and a STYLE change both wait for the loop boundary, so a pattern
+// always starts on the grid, from its own step 1, instead of dropping in
+// mid-phrase (item 6, kept). The boundary is Engine::atLoopEnd: the stretch
+// where the next step to fire is step 0. Until the first pattern is chosen
+// there is nothing playing, so that one is taken at once.
 struct RollPlayer {
     Roll    active  = {};     // the roll the knobs pick from
     Roll    pending = {};     // a Generate waiting for the loop to wrap
@@ -24,7 +25,7 @@ struct RollPlayer {
     int     style = -1;       // STYLE row now playing; -1 = nothing chosen yet
     Pattern current = {};     // the row the engine reads
 
-    // Generate: roll into `pending`. Takes effect at the next wrap.
+    // Generate: roll into `pending`. Takes effect at the next loop boundary.
     void generate(const RollEntropy& e) {
         rollPatterns(e, pending);
         hasPending = true;
@@ -40,13 +41,13 @@ struct RollPlayer {
     // What a patch save stores: what you are hearing, or about to hear.
     const Roll& newest() const { return hasPending ? pending : active; }
 
-    // Call once per sample, before the engine. Returns true if `current`
-    // changed.
-    bool update(int styleKnob, bool loopWrapped) {
+    // Call once per sample, before the engine, with Engine::atLoopEnd.
+    // Returns true if `current` changed.
+    bool update(int styleKnob, bool atLoopEnd) {
         styleKnob = clampStyle(styleKnob);
         if (!hasPending && styleKnob == style)
             return false;
-        if (style >= 0 && !loopWrapped)
+        if (style >= 0 && !atLoopEnd)
             return false;                  // hold it for the grid
         if (hasPending) {
             active     = pending;

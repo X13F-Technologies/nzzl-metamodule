@@ -132,8 +132,11 @@ The RAND row is the roll's **base pattern**; BASS and the ARPs are shaped
 from it, so within one roll RAND and the ARPs share notes and rhythm.
 
 △ **Changes land on the grid.** A Generate or a STYLE change is held until
-the loop wraps, so a new pattern starts from the top rather than dropping in
-mid-phrase. The display flashes amber for 350 ms on a Generate.
+the loop's last step and swapped in then, so the new pattern's own step 1 is
+the first thing heard, rather than dropping in mid-phrase. (Until 2026-11-16
+the swap came one step late — step 1 of the first new loop still played the
+old pattern; fixed and harness-guarded by
+`test_queued_pattern_starts_on_step_one`.) The display flashes amber for 350 ms on a Generate.
 
 **Patch save:** △ `dataToJson` stores the **whole roll** — every row, not
 just the one STYLE points at — so a reloaded patch plays what you heard and
