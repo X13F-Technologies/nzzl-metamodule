@@ -121,8 +121,8 @@ meaningful.
 | ID | Do | Expect |
 |---|---|---|
 | S.1 | Add NZZL to a rack | Module appears, no Rack crash, no red "failed to load" panel |
-| S.2 | Look at the panel | 20 HP: 15 knobs, a RANDOM button, 7 input jacks, 3 output jacks, all labelled, nothing overlapping or off the edge |
-| S.2b | Look at the display | Three lines: `1 . 1`, `BASS`, `C MINOR`. Legible, not clipped |
+| S.2 | Look at the panel | 20 HP: 14 knobs (STYLE top left, an empty slot beside it held for PITCH LENGTH), a RANDOM button, 7 input jacks, 3 output jacks, all labelled, nothing overlapping or off the edge |
+| S.2b | Look at the display | Three lines: `8/16`, `BASS`, `C MINOR`. Legible, not clipped |
 | S.3 | Start the LFO clock | Gate LED activity on the Scope; you hear notes |
 | S.4 | Let it run 60 s | No dropouts, no clicks on every note, no runaway CPU (right-click module → CPU meter stays low) |
 | S.5 | Remove and re-add the module | No crash |
