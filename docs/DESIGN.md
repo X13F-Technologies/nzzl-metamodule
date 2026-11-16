@@ -55,6 +55,10 @@ MetaModule (CI ARM cross-compile) via the SDK's rack-interface shim.
 > Invariants 1 and 2 go when that is built; 3 and 4 stay (density from one
 > shuffled order per roll; randomness only at Generate). Until it is built,
 > the code still follows all four.
+> The rest was decided 2026-11-16 (STYLE knob, PITCH LENGTH, CV DENSITY on
+> the old CV SEED jack, display line 1 = density / length); this file's
+> invariants, the CV SEED semantics below and the "RAND zone stays
+> bit-identical" property are rewritten as part of building item 16.
 
 1. **Seed hashing.** `seed_index` (0–1023, from `(group-1)*32 + (subgroup-1)`)
    passes through `hashSeed()` (splitmix32) before entering xorshift.
