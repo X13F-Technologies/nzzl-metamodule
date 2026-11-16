@@ -490,7 +490,7 @@ harness-guarded; these steps confirm it by ear and eye.
 | F.5 | LENGTH 4, 6, 12 — sweep DENSITY at each | Same: no dead clicks at any length |
 | F.6 | LENGTH 8, DENSITY 8 | All eight steps of the loop play |
 | F.7 | Change STYLE mid-bar while running | The new pattern **waits for the loop to come round** and starts from its step 1, rather than cutting in mid-phrase |
-| F.8 | Fire RESEED or press RANDOM mid-bar | Same — it lands on the grid |
+| F.8 | Fire RESEED or press RANDOM mid-bar | Same — it lands on the grid, and the first note of the new loop is already the **new** pattern's (until 2026-11-16 that first note was still the old one) |
 
 ---
 

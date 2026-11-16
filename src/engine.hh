@@ -114,9 +114,18 @@ struct Engine {
     bool  stepPending   = false;
     float pendingTimer  = 0.f;
 
-    // True on the sample the loop wraps back to step 0. The adapter uses it
-    // to land a queued roll or STYLE change on the grid instead of mid-phrase.
+    // True on the sample the loop wraps back to step 0 (step 0 has just
+    // fired). Informational; too late to swap patterns on.
     bool loopWrapped = false;
+
+    // True while the NEXT step to fire is step 0: before the first pulse, and
+    // for the whole of the loop's last step. The adapter swaps a queued roll
+    // or STYLE change while this is set, so the new pattern's own step 1 is
+    // the first thing heard. Swapping then is safe because the engine reads
+    // the pattern only at the moment a step fires; the sounding last step is
+    // already latched. (Swapping on `loopWrapped` instead was one step late:
+    // step 1 of the first loop still played the old pattern.)
+    bool atLoopEnd = true;
 
     void reset() {
         *this = Engine{};
@@ -191,6 +200,9 @@ struct Engine {
         out.gate     = gateTimer > 0.f ? 10.f : 0.f;
         loopWrapped  = wrappedThisSample;
         wrappedThisSample = false;
+        // A swung step waiting to fire is never step 0 (downbeats are not
+        // delayed), so `step` is the right place to look even then.
+        atLoopEnd    = !started || (step + 1) % length == 0;
         out.velocity = heldVelocity * 10.f;
         out.pitch    = pitchOut(p);
         return out;
