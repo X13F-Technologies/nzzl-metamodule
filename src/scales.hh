@@ -142,14 +142,13 @@ struct QuantizeParams {
 inline float rawVoltage(int pitchIndex, float octaveRaw,
                         const QuantizeParams& p);
 
-inline float quantizedVoltage(int pitchIndex, float octaveRaw,
-                              const QuantizeParams& p) {
-    const Scale& sc = getScale(p.scaleIndex);
-    // The RAW entry has no intervals; never quantize against it.
-    if (sc.noteCount <= 0)
-        return rawVoltage(pitchIndex, octaveRaw, p);
+// A scale degree of a quantized scale, in 1V/oct: root + octave + PITCH
+// OFFSET. `sc` must have intervals (noteCount > 0).
+inline float degreeVoltage(const Scale& sc, int degree, float octaveRaw,
+                           const QuantizeParams& p) {
     int root = p.root < 0 ? 0 : (p.root > 11 ? 11 : p.root);
-    int degree = degreeForIndex(pitchIndex, sc.noteCount);
+    if (degree < 0)              degree = 0;
+    if (degree >= sc.noteCount)  degree = sc.noteCount - 1;
     int octave = octaveForRaw(octaveRaw, p.octaveRange);
 
     // Pitch offset, pre-quantization: move by whole scale degrees and let
@@ -160,6 +159,16 @@ inline float quantizedVoltage(int pitchIndex, float octaveRaw,
 
     int semitone = root + sc.intervals[degree];
     return float(octave) + float(semitone) / 12.f;
+}
+
+inline float quantizedVoltage(int pitchIndex, float octaveRaw,
+                              const QuantizeParams& p) {
+    const Scale& sc = getScale(p.scaleIndex);
+    // The RAW entry has no intervals; never quantize against it.
+    if (sc.noteCount <= 0)
+        return rawVoltage(pitchIndex, octaveRaw, p);
+    return degreeVoltage(sc, degreeForIndex(pitchIndex, sc.noteCount),
+                         octaveRaw, p);
 }
 
 // Unquantized: 16 equal divisions per octave (75 cents apart) so the pattern
@@ -192,11 +201,11 @@ inline float pitchVoltage(const StepData& s, const QuantizeParams& p) {
 
     const Scale& sc = getScale(p.scaleIndex);
     if (s.acidRole >= 0 && sc.noteCount > 0) {
-        // Resolve the role against THIS scale's intervals, then express it
-        // as the pitch index that lands on that degree.
-        const int degree = nearestDegree(sc, s.acidRole);
-        const int idx    = (degree * MAX_STEPS) / sc.noteCount;
-        return quantizedVoltage(idx, raw, p);
+        // Resolve the role against THIS scale's intervals and play that
+        // degree directly. (K8: going back through a pitch index,
+        // degree * 16 / noteCount, then degreeForIndex, floored twice and
+        // lost a degree on most scales: MINOR's fifth played the fourth.)
+        return degreeVoltage(sc, nearestDegree(sc, s.acidRole), raw, p);
     }
     return quantizedVoltage(s.pitchIndex, raw, p);
 }
