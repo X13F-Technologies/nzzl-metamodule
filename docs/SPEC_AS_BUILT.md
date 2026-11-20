@@ -566,6 +566,31 @@ one is inherent to how 303 lines work rather than a bug.
 `test_density_respects_length` asserts that at every LENGTH from 2 to 16,
 each click adds exactly one more playing step.
 
+
+### K7. Quantized notes collapse onto the root (found 2026-11-20)
+
+`Engine::pitchOut` rebuilt the sounding note as a value-initialised
+`StepData`, which sets `acidRole` to 0 ("the root") instead of -1. Every note
+on a quantized scale therefore resolved to the root, and only the octave
+moved. RAND and ARP rows, which never set an acid role, were hit hardest.
+The engine test that checked slide targets rebuilt the note the same way,
+so it agreed with the bug. Found while porting the engine to o_c.
+
+**Fixed.** The held and previous notes now carry `acidRole`
+(`heldStep()` / `prevStep()`), and `test_held_note_keeps_degree` asserts that
+each step sounds its own degree. **This changes what existing patches play:**
+they now sound the melodies the rolls actually contain.
+
+### Added 2026-11-20 (engine only, not yet on the panel)
+
+- **PITCH LENGTH** (`EngineParams::pitchLength`): the pitch sequence loops
+  on its own length (1–16) against the rhythm LENGTH; 0 = follow LENGTH,
+  which plays exactly what it did before (`test_pitch_length_follow_is_unchanged`).
+  The pitch counter advances on every step, sounding or silent.
+- **fastSlide** (`EngineParams::fastSlide`): slide curve without libm, for
+  the o_c's FPU-less Teensy 3.2. Off by default; within 0.1 mV of `std::pow`
+  (`test_fast_slide_matches_pow`).
+
 ---
 
 ## Future additions to consider

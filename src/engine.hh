@@ -60,6 +60,15 @@ struct EngineParams {
     float accent   = 1.f;      // ACCENT knob 0..100 -> 0..1
     int   shift    = 0;        // SHIFT knob: rotate the pattern by whole steps
     float swing    = 0.f;      // SWING knob, 0..1, scales the roll's own swing
+    // PITCH LENGTH: the pitch sequence loops on its own length, independent
+    // of LENGTH, so melody drifts against rhythm. 0 = follow LENGTH, which is
+    // exactly the original behaviour. The pitch counter advances on EVERY
+    // step, sounding or silent, so it stays locked to the clock grid.
+    int   pitchLength = 0;
+    // Opt-in for CPUs without an FPU (o_c on Teensy 3.2): the slide curve
+    // uses fastPow (no libm call per sample) instead of std::pow. Off by
+    // default, so VCV/MetaModule output is unchanged.
+    bool  fastSlide = false;
     QuantizeParams quant{};
 };
 
@@ -99,9 +108,12 @@ struct Engine {
     int   heldPitchIndex = 0;
     float heldOctaveRaw  = 0.f;
     int   heldOctaveJump = -1;
+    int   heldAcidRole   = -1;    // must travel with the index, see pitchOut
     int   prevPitchIndex = 0;     // where a slide starts from
     float prevOctaveRaw  = 0.f;
     int   prevOctaveJump = -1;
+    int   prevAcidRole   = -1;
+    int   pitchStep      = 0;     // position in the PITCH LENGTH loop
     float slideProgress  = 1.f;   // 0 = at prev, 1 = arrived at held
     float slideDuration  = 0.f;   // seconds
 
@@ -213,21 +225,37 @@ struct Engine {
     // turn moves both ends of the glide, and the arrival value is always
     // exactly the quantized target.
     float pitchOut(const EngineParams& p) const {
-        StepData cur{};
-        cur.pitchIndex = heldPitchIndex;
-        cur.octaveRaw  = heldOctaveRaw;
-        cur.octaveJump = heldOctaveJump;
-        const float target = pitchVoltage(cur, p.quant);
+        const float target = pitchVoltage(heldStep(), p.quant);
         if (slideProgress >= 1.f)
             return target;
 
-        StepData prev{};
-        prev.pitchIndex = prevPitchIndex;
-        prev.octaveRaw  = prevOctaveRaw;
-        prev.octaveJump = prevOctaveJump;
-        const float from = pitchVoltage(prev, p.quant);
-        return from + (target - from) * slideCurve(slideProgress, p.slideSlope);
+        const float from = pitchVoltage(prevStep(), p.quant);
+        const float shaped = p.fastSlide
+                           ? slideCurveFast(slideProgress, p.slideSlope)
+                           : slideCurve(slideProgress, p.slideSlope);
+        return from + (target - from) * shaped;
     }
+
+    // The note now sounding, rebuilt as a StepData. acidRole MUST be copied:
+    // a value-initialised StepData has acidRole 0 ("the root"), which made
+    // every quantized note collapse onto the root (bug K7).
+    StepData heldStep() const {
+        StepData s{};
+        s.pitchIndex = heldPitchIndex;
+        s.octaveRaw  = heldOctaveRaw;
+        s.octaveJump = heldOctaveJump;
+        s.acidRole   = heldAcidRole;
+        return s;
+    }
+    StepData prevStep() const {
+        StepData s{};
+        s.pitchIndex = prevPitchIndex;
+        s.octaveRaw  = prevOctaveRaw;
+        s.octaveJump = prevOctaveJump;
+        s.acidRole   = prevAcidRole;
+        return s;
+    }
+
 
     // Shape the glide without breaking its guarantees. Any exponent maps
     // t = 1 to exactly 1, so the note still lands precisely on the quantized
@@ -244,16 +272,62 @@ struct Engine {
         return std::pow(t, k);
     }
 
+    // Same curve via fastPow. Ends are pinned, so arrival stays exact.
+    static float slideCurveFast(float t, float slope) {
+        const float s = clampf(slope, 0.f, 1.f);
+        if (t <= 0.f) return 0.f;
+        if (t >= 1.f) return 1.f;
+        const float k = (s < 0.5f) ? 0.35f + (s / 0.5f) * 0.65f
+                                   : 1.f + ((s - 0.5f) / 0.5f) * 2.f;
+        const float v = fastPow(t, k);
+        return v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+    }
+
+    // t^k for t in (0, 1], k > 0, without libm: log2 from the float's exponent
+    // plus a polynomial on the mantissa, exp2 likewise. Relative error ~1e-4,
+    // i.e. well under a cent on a several-octave glide.
+    static float fastPow(float t, float k) {
+        return fastExp2(k * fastLog2(t));
+    }
+    static float fastLog2(float x) {
+        union { float f; uint32_t i; } u{x};
+        const int e = int((u.i >> 23) & 0xff) - 127;
+        u.i = (u.i & 0x007fffffu) | 0x3f800000u;          // mantissa in [1, 2)
+        const float m = u.f;
+        // least-squares fit of log2(m) on [1, 2), 5th order, max error 3.2e-5
+        const float p = -2.7868458f + m * (5.0469786f + m * (-3.4926196f
+                      + m * (1.5939760f + m * (-0.40488876f + m * 0.043431324f))));
+        return float(e) + p;
+    }
+    static float fastExp2(float x) {
+        if (x < -126.f) return 0.f;
+        const float fl = float(int(x) - (x < 0.f && float(int(x)) != x ? 1 : 0));
+        const float f  = x - fl;                            // [0, 1)
+        // least-squares fit of 2^f on [0, 1), 5th order, max error 2.5e-7
+        const float p = 0.99999977f + f * (0.69315677f + f * (0.24013173f
+                      + f * (0.055876505f + f * (0.0089406036f + f * 0.0018943829f))));
+        union { float f; uint32_t i; } u{p};
+        u.i += uint32_t(int32_t(fl)) << 23;
+        return u.f;
+    }
+
 private:
     bool wrappedThisSample = false;
 
     void fireStep(const Pattern& pat, const EngineParams& p,
                   int clockDiv, int length) {
-        if (!started) {
+        const bool first = !started;
+        if (first) {
             started = true;
             step = 0;                 // pulse 1 plays step index 0 (bug K1)
         } else {
             step = (step + 1) % length;
+        }
+        if (p.pitchLength <= 0) {
+            pitchStep = step;         // follow LENGTH: identical to before
+        } else {
+            const int pl = clampi(p.pitchLength, 1, MAX_STEPS);
+            pitchStep = first ? 0 : (pitchStep + 1) % pl;
         }
         if (step == 0) wrappedThisSample = true;
         advanceStep(pat, p, clockDiv);
@@ -286,12 +360,17 @@ private:
         gateTimer    = gateFrac * stepDur;
         heldVelocity = velocityFor(st.velLayer, p.accent);
 
+        // Rhythm (gate, velocity, slide) comes from `st`; pitch from the
+        // PITCH LENGTH position, which is the same step when following.
+        const StepData& ps = pat.steps[rotatedIndex(pitchStep, p.shift)];
         prevPitchIndex = heldPitchIndex;
         prevOctaveRaw  = heldOctaveRaw;
         prevOctaveJump = heldOctaveJump;
-        heldPitchIndex = st.pitchIndex;
-        heldOctaveRaw  = st.octaveRaw;
-        heldOctaveJump = st.octaveJump;
+        prevAcidRole   = heldAcidRole;
+        heldPitchIndex = ps.pitchIndex;
+        heldOctaveRaw  = ps.octaveRaw;
+        heldOctaveJump = ps.octaveJump;
+        heldAcidRole   = ps.acidRole;
 
         if (tied) {
             // Linear ramp over a fraction of the step. Linear, not exponential:

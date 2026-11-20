@@ -404,11 +404,9 @@ static void test_slide_reaches_target() {
                 sliding = true;
                 elapsed = 0.f;
                 from = prevPitch;
-                StepData cur{};
-                cur.pitchIndex = e.heldPitchIndex;
-                cur.octaveRaw  = e.heldOctaveRaw;
-                cur.octaveJump = e.heldOctaveJump;   // a 303 octave-up counts
-                target = pitchVoltage(cur, p.quant);
+                // heldStep() carries acidRole too; rebuilding it by hand
+                // here once hid bug K7 by repeating the engine's mistake.
+                target = pitchVoltage(e.heldStep(), p.quant);
             }
             if (sliding) {
                 elapsed += DT;
@@ -924,6 +922,146 @@ static void test_engine_determinism() {
     printf("engine determinism: identical output for identical input\n");
 }
 
+
+// ── held note keeps its scale degree (bug K7) ────────────────────────────────
+
+// A step that is NOT an acid-role step (acidRole -1) must sound at its own
+// pitch index. Before the fix, the held note was rebuilt with acidRole 0 and
+// every quantized note fell onto the root.
+static void test_held_note_keeps_degree() {
+    Pattern pat;
+    patternFor(3, 0, pat);
+    for (int i = 0; i < MAX_STEPS; i++) {
+        pat.steps[i].pitchIndex = i;
+        pat.steps[i].acidRole   = -1;
+        pat.steps[i].octaveJump = 0;
+        pat.steps[i].slide      = false;
+    }
+    EngineParams p;
+    p.density = MAX_STEPS;
+    Engine e;
+    Clock clk(0.1f);
+    int lastStep = -1, distinct = 0;
+    float lastPitch = -100.f;
+    run(e, clk, pat, p, 1.65f, [&](EngineOutputs o, float) {
+        if (e.step != lastStep && e.started) {
+            lastStep = e.step;
+            StepData expect = pat.steps[e.step];
+            CHECK(std::fabs(o.pitch - pitchVoltage(expect, p.quant)) < EPS,
+                  "step %d sounds %.4f V, its own pitch is %.4f V",
+                  e.step, o.pitch, pitchVoltage(expect, p.quant));
+            if (std::fabs(o.pitch - lastPitch) > EPS) distinct++;
+            lastPitch = o.pitch;
+        }
+    });
+    CHECK(distinct >= 8, "only %d pitch changes over 16 rising steps", distinct);
+    printf("held note: every step sounds its own degree (%d changes)\n", distinct);
+}
+
+// ── PITCH LENGTH ─────────────────────────────────────────────────────────────
+
+// Records the pitch at the moment each step fires.
+static void stepPitches(const Pattern& pat, const EngineParams& p, int nSteps,
+                        float* out) {
+    Engine e;
+    Clock clk(0.1f);
+    int fired = 0, lastStep = -1;
+    bool wasStarted = false;
+    run(e, clk, pat, p, 0.1f * float(nSteps) + 0.05f, [&](EngineOutputs o, float) {
+        // a step fires when step changes, or on the very first pulse
+        if ((e.started && !wasStarted) || (e.started && e.step != lastStep)) {
+            if (fired < nSteps) out[fired++] = o.pitch;
+        }
+        wasStarted = e.started;
+        lastStep = e.step;
+    });
+}
+
+static void test_pitch_length_follow_is_unchanged() {
+    // Following (0) and an explicit pitch length equal to LENGTH must give
+    // the same notes at every LENGTH, for every style.
+    for (int k = 0; k < 12; k++) {
+        Pattern pat;
+        anyPatternFor(k, pat);
+        for (int len : {4, 7, 16}) {
+            EngineParams a;  a.density = MAX_STEPS; a.length = len;
+            EngineParams b = a; b.pitchLength = len;
+            float pa[40], pb[40];
+            stepPitches(pat, a, 40, pa);
+            stepPitches(pat, b, 40, pb);
+            for (int i = 0; i < 40; i++)
+                CHECK(std::fabs(pa[i] - pb[i]) < EPS,
+                      "roll %d len %d step %d: follow %.4f vs explicit %.4f",
+                      k, len, i, pa[i], pb[i]);
+        }
+    }
+    printf("pitch length: follow == explicit LENGTH across 12 rolls x 3 lengths\n");
+}
+
+static void test_pitch_length_loops_independently() {
+    Pattern pat;
+    patternFor(5, 0, pat);
+    for (int i = 0; i < MAX_STEPS; i++) {
+        pat.steps[i].pitchIndex = i;
+        pat.steps[i].acidRole   = -1;
+        pat.steps[i].octaveJump = 0;
+        pat.steps[i].slide      = false;
+    }
+    EngineParams p;
+    p.density = MAX_STEPS;
+    p.length = 16;
+    p.pitchLength = 5;
+    float got[40];
+    stepPitches(pat, p, 40, got);
+    for (int i = 0; i < 40; i++) {
+        float want = pitchVoltage(pat.steps[i % 5], p.quant);
+        CHECK(std::fabs(got[i] - want) < EPS,
+              "step %d: pitch %.4f, expected pitch step %d (%.4f)",
+              i, got[i], i % 5, want);
+    }
+    printf("pitch length: 5 against 16 cycles the first five pitches\n");
+}
+
+// ── fast slide (o_c / no-FPU path) ──────────────────────────────────────
+
+static void test_fast_slide_matches_pow() {
+    float worst = 0.f;
+    int slides = 0;
+    for (int roll = 0; roll < 16; roll++) {
+        Pattern pat;
+        patternFor(roll, STYLE_POS_BASS, pat);
+        for (float slope : {0.f, 0.25f, 0.5f, 0.8f, 1.f}) {
+            EngineParams a; a.density = MAX_STEPS; a.slideKnob = 1.f; a.slideSlope = slope;
+            EngineParams b = a; b.fastSlide = true;
+            Engine ea, eb;
+            Clock ca(0.2f), cb(0.2f);
+            int n = int(3.f * SR);
+            bool wasSliding = false;
+            for (int i = 0; i < n; i++) {
+                EngineInputs ia; ia.clock = ca.tick(DT);
+                EngineInputs ib; ib.clock = cb.tick(DT);
+                EngineOutputs oa = ea.process(DT, ia, pat, a);
+                EngineOutputs ob = eb.process(DT, ib, pat, b);
+                float d = std::fabs(oa.pitch - ob.pitch);
+                if (d > worst) worst = d;
+                bool sliding = ea.slideProgress < 1.f;
+                if (wasSliding && !sliding) {
+                    slides++;
+                    CHECK(std::fabs(oa.pitch - ob.pitch) < EPS,
+                          "fast slide did not arrive exactly");
+                }
+                wasSliding = sliding;
+            }
+        }
+    }
+    // 1 cent = 0.00083 V; a 33-point table must stay well inside that
+    // for glides of up to a few octaves.
+    CHECK(worst < 0.0008f, "fast slide off by %.5f V", worst);
+    CHECK(slides > 20, "only %d slides compared", slides);
+    printf("fast slide: %d glides, worst deviation %.5f V, exact arrival\n",
+           slides, worst);
+}
+
 int main() {
     test_clock_advances_steps();
     test_clock_divide();
@@ -950,6 +1088,10 @@ int main() {
     test_loop_wrap_signal();
     test_reseed_edge();
     test_engine_determinism();
+    test_held_note_keeps_degree();
+    test_pitch_length_follow_is_unchanged();
+    test_pitch_length_loops_independently();
+    test_fast_slide_matches_pow();
 
     if (failures) {
         printf("\n%d FAILURES\n", failures);
