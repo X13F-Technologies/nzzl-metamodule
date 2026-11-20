@@ -581,6 +581,23 @@ so it agreed with the bug. Found while porting the engine to o_c.
 each step sounds its own degree. **This changes what existing patches play:**
 they now sound the melodies the rolls actually contain.
 
+### K8. Bass notes land one degree low (found 2026-11-16, fixed 2026-11-20)
+
+`pitchVoltage` resolved a bass step's acid role to the right degree with
+`nearestDegree`, then turned it back into a pitch index
+(`degree * 16 / noteCount`) and through `degreeForIndex` again. Both steps
+round down, so on most scales the note lost a degree: on MINOR the third
+played the second, the fourth the third, the fifth the fourth. Found while
+porting the generator to TRNSPRT (which never had it); inaudible until K7
+was fixed, because every note played the root.
+
+**Fixed.** A role step now plays its resolved degree directly
+(`degreeVoltage`, which `quantizedVoltage` also uses, so non-role steps are
+unchanged). `test_acid_roles_sound_their_degree` checks every role on every
+quantized scale and chord; it fails 61 times on the old code. **This changes
+what BASS patches play:** their thirds, fourths, fifths and sevenths now land
+where the 303 rules intend.
+
 ### Added 2026-11-20 (engine only, not yet on the panel)
 
 - **PITCH LENGTH** (`EngineParams::pitchLength`): the pitch sequence loops

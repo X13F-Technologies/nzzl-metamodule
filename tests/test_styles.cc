@@ -224,6 +224,40 @@ static void test_acid_roles_resolve_on_every_scale() {
            "and chords, triads included\n", NUM_SCALES - 1);
 }
 
+// K8: a bass step must SOUND the degree its role resolves to, on every scale
+// and chord. pitchVoltage used to turn the degree back into a pitch index and
+// lose one on most scales (MINOR's third played the second, the fifth the
+// fourth), which only became audible once K7 stopped every note being the root.
+static void test_acid_roles_sound_their_degree() {
+    const int roles[5] = { ACID_ROOT, ACID_THIRD, ACID_FOURTH,
+                           ACID_FIFTH, ACID_SEVENTH };
+    for (int sc = 1; sc < NUM_SCALES; sc++) {
+        const Scale& scale = getScale(sc);
+        if (scale.noteCount <= 0) continue;
+        for (int k = 0; k < 5; k++) {
+            StepData st{};
+            st.acidRole   = int8_t(roles[k]);
+            st.octaveJump = 0;
+            st.pitchIndex = 15;          // must be ignored for a role step
+            QuantizeParams p;
+            p.scaleIndex  = sc;
+            p.root        = 0;
+            p.octaveRange = 1;
+            const int want = scale.intervals[nearestDegree(scale, roles[k])];
+            const int got  = int(std::lround(pitchVoltage(st, p) * 12.f));
+            CHECK(got == want, "scale %s: role %d sounded %d st, wants %d st",
+                  scale.name, roles[k], got, want);
+        }
+    }
+    StepData fifth{};
+    fifth.acidRole = ACID_FIFTH; fifth.octaveJump = 0;
+    QuantizeParams minor; minor.octaveRange = 1;
+    CHECK(int(std::lround(pitchVoltage(fifth, minor) * 12.f)) == 7,
+          "MINOR's fifth no longer plays G over C");
+    printf("acid roles: every bass step sounds its resolved degree on all "
+           "quantized scales and chords\n");
+}
+
 // Octave-up jumps: present, rare, and never anything but +1.
 static void test_bass_octave_jumps() {
     int up = 0, total = 0;
@@ -348,6 +382,7 @@ int main() {
     test_bass_downbeat();
     test_bass_pitch_vocabulary();
     test_acid_roles_resolve_on_every_scale();
+    test_acid_roles_sound_their_degree();
     test_bass_octave_jumps();
     test_bass_ties();
     test_arp_shapes();
